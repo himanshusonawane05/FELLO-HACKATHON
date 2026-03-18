@@ -60,13 +60,17 @@ def _db_path_from_url(database_url: str) -> str:
 async def init_db(database_url: str) -> None:
     """Create the database file (if needed) and ensure tables exist.
 
+    Enables WAL mode for safe concurrent reads and sets a connection
+    timeout so requests fail fast instead of hanging under contention.
     Logs the absolute resolved path so production logs show exactly where
     the file is being created regardless of working directory.
     """
     db_path = _db_path_from_url(database_url)
     abs_path = Path(db_path).resolve()
     abs_path.parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(str(abs_path)) as db:
+    async with aiosqlite.connect(str(abs_path), timeout=30) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=NORMAL")
         await db.executescript(_SCHEMA_SQL)
         await db.commit()
     logger.info("SQLite database initialized at %s", abs_path)
@@ -87,7 +91,7 @@ class SQLiteJobStore(AbstractJobStore):
             created_at=now,
             updated_at=now,
         )
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=30) as db:
             await db.execute(
                 "INSERT INTO jobs (job_id, status, progress, current_step, result_id, error, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -116,7 +120,7 @@ class SQLiteJobStore(AbstractJobStore):
         values = list(fields.values())
         values.append(job_id)
 
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=30) as db:
             cursor = await db.execute(
                 f"UPDATE jobs SET {set_clause} WHERE job_id = ?",  # noqa: S608
                 values,
@@ -129,7 +133,7 @@ class SQLiteJobStore(AbstractJobStore):
 
     async def get(self, job_id: str) -> Optional[JobRecord]:
         """Retrieve a job record by ID."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=30) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
             row = await cursor.fetchone()
@@ -161,7 +165,7 @@ class SQLiteAccountStore(AbstractAccountStore):
         domain = intelligence.company.domain if intelligence.company else None
         industry = intelligence.company.industry if intelligence.company else None
 
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=30) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO accounts "
                 "(account_id, company_name, domain, industry, confidence_score, analyzed_at, data) "
@@ -181,7 +185,7 @@ class SQLiteAccountStore(AbstractAccountStore):
 
     async def get(self, account_id: str) -> Optional[AccountIntelligence]:
         """Retrieve account intelligence by ID."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=30) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT data FROM accounts WHERE account_id = ?", (account_id,)
@@ -193,7 +197,7 @@ class SQLiteAccountStore(AbstractAccountStore):
 
     async def list(self, page: int = 1, size: int = 20) -> tuple[list[AccountIntelligence], int]:
         """Return a paginated list of all account intelligence records."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=30) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT COUNT(*) as cnt FROM accounts")
             count_row = await cursor.fetchone()
