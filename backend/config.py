@@ -42,6 +42,21 @@ class Settings(BaseSettings):
         description="SQLite database path. Set to empty string or 'none' to use in-memory stores.",
     )
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: object) -> Optional[str]:
+        """Strip whitespace so Railway/env vars with trailing spaces are respected.
+
+        DATABASE_URL=sqlite:////data/fello.db must be used as-is; no relative
+        path override. This validator only normalizes whitespace.
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            stripped = v.strip()
+            return stripped if stripped else None
+        return v  # type: ignore[return-value]
+
     # ── Server ────────────────────────────────────────────────────────────────
     HOST: str = Field(default="0.0.0.0", description="Server host")
     PORT: int = Field(default=8000, description="Server port")

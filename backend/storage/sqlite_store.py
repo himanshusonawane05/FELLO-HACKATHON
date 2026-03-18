@@ -44,10 +44,17 @@ CREATE INDEX IF NOT EXISTS idx_accounts_analyzed ON accounts(analyzed_at DESC);
 
 
 def _db_path_from_url(database_url: str) -> str:
-    """Extract the file path from a 'sqlite:///...' URL."""
-    if database_url.startswith("sqlite:///"):
-        return database_url[len("sqlite:///"):]
-    return database_url
+    """Extract the file path from a 'sqlite:///...' URL.
+
+    Supports both relative and absolute paths:
+    - sqlite:///data/fello.db     -> data/fello.db (relative)
+    - sqlite:////data/fello.db    -> /data/fello.db (absolute, 4 slashes)
+    """
+    url = (database_url or "").strip()
+    if url.startswith("sqlite:///"):
+        path = url[len("sqlite:///") :].rstrip("/")
+        return path if path else "data/fello.db"
+    return url or "data/fello.db"
 
 
 async def init_db(database_url: str) -> None:

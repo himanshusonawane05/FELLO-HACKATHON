@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.api.schemas.responses import (
@@ -19,6 +21,7 @@ from backend.api.schemas.responses import (
 from backend.controllers.analysis import analysis_controller
 
 router = APIRouter(prefix="/accounts", tags=["Accounts"])
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -31,19 +34,29 @@ async def list_accounts(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> AccountListResponse:
     """Return a paginated list of completed account intelligence results."""
-    accounts, total = await analysis_controller.list_accounts(page=page, page_size=page_size)
-    summaries = [
-        AccountSummaryResponse(
-            account_id=a.id,
-            company_name=a.company.company_name,
-            domain=a.company.domain,
-            industry=a.company.industry,
-            intent_score=a.intent.intent_score if a.intent else None,
-            confidence_score=a.confidence_score,
-            analyzed_at=a.analyzed_at,
-        )
-        for a in accounts
-    ]
+    try:
+        accounts, total = await analysis_controller.list_accounts(page=page, page_size=page_size)
+    except Exception as exc:
+        logger.warning("list_accounts failed, returning empty list: %s", exc, exc_info=True)
+        return AccountListResponse(accounts=[], total=0, page=page, page_size=page_size)
+
+    summaries = []
+    for a in accounts:
+        try:
+            company = getattr(a, "company", None)
+            summaries.append(
+                AccountSummaryResponse(
+                    account_id=a.id,
+                    company_name=company.company_name if company else "Unknown",
+                    domain=company.domain if company else None,
+                    industry=company.industry if company else None,
+                    intent_score=a.intent.intent_score if a.intent else None,
+                    confidence_score=a.confidence_score,
+                    analyzed_at=a.analyzed_at,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Skipping malformed account %s: %s", getattr(a, "id", "?"), exc)
     return AccountListResponse(accounts=summaries, total=total, page=page, page_size=page_size)
 
 
