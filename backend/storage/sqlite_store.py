@@ -58,20 +58,25 @@ def _db_path_from_url(database_url: str) -> str:
 
 
 async def init_db(database_url: str) -> None:
-    """Create the database file (if needed) and ensure tables exist."""
+    """Create the database file (if needed) and ensure tables exist.
+
+    Logs the absolute resolved path so production logs show exactly where
+    the file is being created regardless of working directory.
+    """
     db_path = _db_path_from_url(database_url)
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(db_path) as db:
+    abs_path = Path(db_path).resolve()
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(str(abs_path)) as db:
         await db.executescript(_SCHEMA_SQL)
         await db.commit()
-    logger.info("SQLite database initialized at %s", db_path)
+    logger.info("SQLite database initialized at %s", abs_path)
 
 
 class SQLiteJobStore(AbstractJobStore):
     """SQLite-backed job store implementing AbstractJobStore."""
 
     def __init__(self, database_url: str) -> None:
-        self._db_path = _db_path_from_url(database_url)
+        self._db_path = str(Path(_db_path_from_url(database_url)).resolve())
 
     async def create(self, job_id: str) -> JobRecord:
         """Create a new PENDING job."""
@@ -146,7 +151,7 @@ class SQLiteAccountStore(AbstractAccountStore):
     """SQLite-backed account store implementing AbstractAccountStore."""
 
     def __init__(self, database_url: str) -> None:
-        self._db_path = _db_path_from_url(database_url)
+        self._db_path = str(Path(_db_path_from_url(database_url)).resolve())
 
     async def save(self, intelligence: AccountIntelligence) -> str:
         """Persist an AccountIntelligence object. Returns its ID."""

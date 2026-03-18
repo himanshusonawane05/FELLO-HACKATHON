@@ -1,5 +1,4 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -34,20 +33,29 @@ async def lifespan(app: FastAPI):
 
     db_url = settings.DATABASE_URL
     if db_url and db_url.lower() not in ("", "none"):
-        from backend.storage.sqlite_store import (
-            SQLiteAccountStore,
-            SQLiteJobStore,
-            init_db,
-        )
+        try:
+            from backend.storage.sqlite_store import (
+                SQLiteAccountStore,
+                SQLiteJobStore,
+                init_db,
+            )
 
-        await init_db(db_url)
+            await init_db(db_url)
 
-        import backend.storage.account_store as _as
-        import backend.storage.job_store as _js
+            import backend.storage.account_store as _as
+            import backend.storage.job_store as _js
 
-        _js.job_store = SQLiteJobStore(db_url)
-        _as.account_store = SQLiteAccountStore(db_url)
-        logger.info("  Storage      : SQLite (%s)", db_url)
+            _js.job_store = SQLiteJobStore(db_url)
+            _as.account_store = SQLiteAccountStore(db_url)
+            logger.info("  Storage      : SQLite (%s)", db_url)
+        except Exception as exc:
+            logger.error(
+                "  Storage      : SQLite init FAILED (%s) — falling back to in-memory: %s",
+                db_url,
+                exc,
+                exc_info=True,
+            )
+            logger.warning("  Storage      : In-memory (data will not persist)")
     else:
         logger.info("  Storage      : In-memory (data lost on restart)")
 
