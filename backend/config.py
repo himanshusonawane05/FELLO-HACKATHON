@@ -60,27 +60,45 @@ class Settings(BaseSettings):
     # ── Server ────────────────────────────────────────────────────────────────
     HOST: str = Field(default="0.0.0.0", description="Server host")
     PORT: int = Field(default=8000, description="Server port")
-    CORS_ORIGINS: list[str] = Field(
-        default=["http://localhost:3000"], description="Allowed CORS origins"
+
+    # Declared as str so pydantic-settings does NOT attempt json.loads() on it.
+    # parse_cors_origins converts it to list[str] before validation completes.
+    CORS_ORIGINS: str = Field(
+        default="http://localhost:3000",
+        description="Allowed CORS origins — comma-separated or JSON array string.",
     )
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: object) -> list[str]:
-        """Accept a JSON array string, a comma-separated string, or a list.
+    def parse_cors_origins(cls, v: object) -> str:
+        """Normalise any input form to a comma-joined string.
 
-        Railway and most cloud platforms set env vars as plain strings.
-        This validator handles all three forms so the middleware always
-        receives a proper list regardless of how the value was supplied.
+        Accepted forms (from Railway / .env / code):
+          - Plain URL:          https://foo.vercel.app
+          - Comma-separated:    https://foo.vercel.app,http://localhost:3000
+          - JSON array string:  ["https://foo.vercel.app"]
+          - Python list:        ["https://foo.vercel.app"]  (from .env parsing)
+
+        Returns a comma-joined string so the field type stays str and
+        pydantic-settings never tries json.loads() on it.
         """
         if isinstance(v, list):
-            return v
+            return ",".join(str(o).strip() for o in v if str(o).strip())
         if isinstance(v, str):
             stripped = v.strip()
             if stripped.startswith("["):
-                return json.loads(stripped)
-            return [origin.strip() for origin in stripped.split(",") if origin.strip()]
-        return v  # type: ignore[return-value]
+                try:
+                    parsed = json.loads(stripped)
+                    return ",".join(str(o).strip() for o in parsed if str(o).strip())
+                except json.JSONDecodeError:
+                    pass
+            return stripped
+        return str(v) if v is not None else ""
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Return CORS_ORIGINS as a parsed list of origin strings."""
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     # ── Tuning ────────────────────────────────────────────────────────────────
     TOOL_TIMEOUT_SECONDS: int = Field(default=8, description="Per-tool call hard timeout")

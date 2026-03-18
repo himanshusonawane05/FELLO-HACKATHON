@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     logger.info("  TAVILY key   : %s", _mask(settings.TAVILY_API_KEY))
     logger.info("  LLM primary  : %s", settings.GEMINI_MODEL_NAME if settings.GEMINI_API_KEY else settings.MODEL_NAME)
     logger.info("  LLM fallback : %s", settings.MODEL_NAME if settings.GEMINI_API_KEY else "none")
-    logger.info("  CORS origins : %s", settings.CORS_ORIGINS)
+    logger.info("  CORS origins : %s", settings.cors_origins_list)
 
     db_url = settings.DATABASE_URL
     if db_url and db_url.lower() not in ("", "none"):
@@ -75,7 +75,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=settings.cors_origins_list,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
