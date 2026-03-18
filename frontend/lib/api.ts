@@ -8,10 +8,12 @@ import type {
   VisitorAnalysisRequest,
 } from "@/types/intelligence";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+// Base URL must NOT include /api/v1 — that prefix is appended here.
+// Set NEXT_PUBLIC_API_URL to the bare origin, e.g. https://foo.railway.app
+const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${BASE_URL}/api/v1${path}`, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });

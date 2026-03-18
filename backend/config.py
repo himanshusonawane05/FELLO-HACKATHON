@@ -1,7 +1,8 @@
+import json
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Absolute path to backend/.env — works regardless of the working directory
@@ -47,6 +48,24 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = Field(
         default=["http://localhost:3000"], description="Allowed CORS origins"
     )
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> list[str]:
+        """Accept a JSON array string, a comma-separated string, or a list.
+
+        Railway and most cloud platforms set env vars as plain strings.
+        This validator handles all three forms so the middleware always
+        receives a proper list regardless of how the value was supplied.
+        """
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            stripped = v.strip()
+            if stripped.startswith("["):
+                return json.loads(stripped)
+            return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+        return v  # type: ignore[return-value]
 
     # ── Tuning ────────────────────────────────────────────────────────────────
     TOOL_TIMEOUT_SECONDS: int = Field(default=8, description="Per-tool call hard timeout")
