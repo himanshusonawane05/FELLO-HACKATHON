@@ -24,5 +24,8 @@ tavily-python==0.3.3
 # Web scraping
 beautifulsoup4==4.12.3
 
+# Database
+aiosqlite>=0.20.0
+
 # Utilities
 python-dotenv==1.0.1

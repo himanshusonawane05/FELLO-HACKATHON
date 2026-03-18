@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     CLEARBIT_API_KEY: Optional[str] = Field(default=None, description="Clearbit API key")
     APOLLO_API_KEY: Optional[str] = Field(default=None, description="Apollo API key")
 
+    # ── Storage ─────────────────────────────────────────────────────────────
+    DATABASE_URL: Optional[str] = Field(
+        default="sqlite:///data/fello.db",
+        description="SQLite database path. Set to empty string or 'none' to use in-memory stores.",
+    )
+
     # ── Server ────────────────────────────────────────────────────────────────
     HOST: str = Field(default="0.0.0.0", description="Server host")
     PORT: int = Field(default=8000, description="Server port")

@@ -24,6 +24,9 @@ frontend/.next/
 frontend/out/
 frontend/.vercel/
 
+# ── Database ───────────────────────────────────────────────────────────────────
+data/
+
 # ── Test output ─────────────────────────────────────────────────────────────────
 test-results/
 playwright-report/

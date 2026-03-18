@@ -1,31 +1,37 @@
 # Database Schema — Fello AI Account Intelligence System
 
-> **Version**: 1.0  
+> **Version**: 2.0  
 > **Date**: 2026-03-18  
-> **Storage Engine**: In-memory Python dicts (hackathon scope)  
-> **Depends on**: [LLD](./lld.md), [API Contracts](./api-contracts.md)
+> **Storage Engine**: SQLite (default) / In-memory Python dicts (fallback)  
+> **Depends on**: [LLD](./lld.md), [API Contracts](./api-contracts.md)  
+> **Status**: SQLite persistence implemented — data survives restarts
 
 ---
 
 ## 1. Storage Architecture
 
-The system uses **in-memory dict-based stores** protected by `asyncio.Lock`. All store methods are `async def` so the interface is migration-ready for PostgreSQL/Redis without changing callers.
+The system uses **SQLite** (default) or **in-memory dicts** (fallback) for persistence. The storage backend is selected by the `DATABASE_URL` config setting. Both backends implement the same `AbstractJobStore` / `AbstractAccountStore` interfaces, so controllers and graph code are unaffected.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    Storage Layer                         │
 │                                                         │
-│  ┌─────────────────┐       ┌──────────────────────┐    │
-│  │    JobStore      │       │   AccountStore        │    │
-│  │                  │       │                       │    │
-│  │  dict[str,       │  ref  │  dict[str,            │    │
-│  │    JobRecord]    │──────▶│    AccountIntelligence]│    │
-│  │                  │       │                       │    │
-│  │  key: job_id     │       │  key: account_id      │    │
-│  └─────────────────┘       └──────────────────────┘    │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │    AbstractJobStore / AbstractAccountStore       │    │
+│  │         (backend/storage/base.py)                │    │
+│  └──────────┬──────────────────────┬───────────────┘    │
+│             │                      │                     │
+│  ┌──────────▼─────────┐ ┌─────────▼──────────────┐     │
+│  │  SQLiteJobStore     │ │  InMemoryJobStore       │     │
+│  │  SQLiteAccountStore │ │  InMemoryAccountStore   │     │
+│  │  (sqlite_store.py)  │ │  (job_store.py,         │     │
+│  │                     │ │   account_store.py)     │     │
+│  │  Database file:     │ │  Python dicts +         │     │
+│  │  data/fello.db      │ │  asyncio.Lock           │     │
+│  └─────────────────────┘ └────────────────────────┘     │
 │                                                         │
-│  Both stores: module-level singletons                   │
-│  Concurrency: asyncio.Lock per store                    │
+│  Selected via DATABASE_URL config setting               │
+│  Module-level singletons swapped in main.py lifespan    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -288,85 +294,98 @@ This is a **projection** — a read-only subset of the full object. The API laye
 
 ---
 
-## 5. In-Memory Implementation Details
+## 5. Implementation Details
 
-### 5.1 Internal Data Structure
+### 5.1 SQLite Backend (Default)
+
+- Database file: `data/fello.db` (created automatically on startup)
+- Driver: `aiosqlite` (async wrapper around Python's built-in `sqlite3`)
+- Each operation opens and closes a connection (simple, no pooling)
+- `accounts.data` column stores full `AccountIntelligence` as JSON via `model_dump_json()`
+- Deserialized on read via `AccountIntelligence.model_validate_json()`
+- Denormalized columns (`company_name`, `domain`, `industry`, `confidence_score`) enable efficient listing without JSON parsing
+
+### 5.2 In-Memory Backend (Fallback)
 
 ```python
-class InMemoryJobStore:
-    _jobs: dict[str, JobRecord]       # key = job_id
+class InMemoryJobStore(AbstractJobStore):
+    _store: dict[str, JobRecord]       # key = job_id
     _lock: asyncio.Lock
 
-class InMemoryAccountStore:
-    _accounts: dict[str, AccountIntelligence]  # key = account_id
+class InMemoryAccountStore(AbstractAccountStore):
+    _store: dict[str, AccountIntelligence]  # key = account_id
     _lock: asyncio.Lock
 ```
 
-### 5.2 Concurrency Safety
+- Activated by setting `DATABASE_URL=none` or `DATABASE_URL=`
+- Data lost on server restart
+- Useful for testing or when SQLite is not desired
 
-- Every `create`/`update`/`save` acquires the lock before writing
-- `get` operations can read without locking (Python dict reads are atomic for immutable values)
-- `list` acquires lock to ensure consistent snapshot during pagination
+### 5.3 Store Selection (main.py lifespan)
 
-### 5.3 Memory Constraints
+On startup, the `lifespan` function in `backend/main.py` checks `settings.DATABASE_URL`:
+- If set and not `"none"`: initializes SQLite tables via `init_db()`, replaces module-level `job_store` and `account_store` singletons with `SQLiteJobStore` / `SQLiteAccountStore`
+- If unset or `"none"`: keeps the default `InMemoryJobStore` / `InMemoryAccountStore`
 
-For hackathon scope (< 100 accounts):
-- Each AccountIntelligence: ~2–5 KB serialized
-- 100 accounts: ~500 KB total
-- No eviction policy needed
+### 5.4 Concurrency Safety
 
-### 5.4 Data Lifetime
-
-- Data persists only while the backend process runs
-- Server restart = clean slate (acceptable for hackathon)
-- No persistence to disk
+- **SQLite**: SQLite handles its own locking; each operation uses a separate connection
+- **In-memory**: `asyncio.Lock` protects concurrent writes
 
 ---
 
-## 6. Future Migration Path (Post-Hackathon)
+## 6. SQLite Schema (Implemented)
 
-If migrating to a real database, the async interface means zero changes to controllers/graph:
+The SQLite database (`data/fello.db`) is created automatically on startup via `CREATE TABLE IF NOT EXISTS`. No migrations framework is used.
+
+### 6.1 Schema SQL
+
+```sql
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    progress REAL NOT NULL DEFAULT 0.0,
+    current_step TEXT,
+    result_id TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+    account_id TEXT PRIMARY KEY,
+    company_name TEXT NOT NULL,
+    domain TEXT,
+    industry TEXT,
+    confidence_score REAL NOT NULL DEFAULT 0.0,
+    analyzed_at TEXT NOT NULL,
+    data JSON NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_analyzed ON accounts(analyzed_at DESC);
+```
+
+### 6.2 Design Decisions
+
+- `accounts.data` stores the full `AccountIntelligence` as a JSON blob (via `model_dump_json()` / `model_validate_json()`)
+- Top-level columns (`company_name`, `domain`, `industry`, `confidence_score`, `analyzed_at`) are denormalized for efficient listing/filtering without parsing JSON
+- `jobs` table stores flat fields directly (no JSON blob needed)
+- `aiosqlite` provides async access matching the existing store interface
+- Each operation opens and closes a connection (simple, no pooling needed for hackathon scale)
+
+### 6.3 Configuration
+
+```env
+# In backend/.env
+DATABASE_URL=sqlite:///data/fello.db    # default — SQLite persistence
+DATABASE_URL=none                        # fallback — in-memory (data lost on restart)
+```
+
+### 6.4 Future Migration Path (Post-Hackathon)
 
 | Current | Future | Migration Effort |
 |---------|--------|-----------------|
-| `dict[str, JobRecord]` | PostgreSQL `jobs` table | Replace store implementation only |
-| `dict[str, AccountIntelligence]` | PostgreSQL `accounts` table + JSON columns | Replace store implementation only |
-| `asyncio.Lock` | DB connection pool + transactions | Automatic via async ORM |
-| Module singleton | FastAPI dependency injection | Minor refactor |
-
-### 6.1 Potential PostgreSQL Schema
-
-```sql
-CREATE TABLE jobs (
-    job_id UUID PRIMARY KEY,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    progress FLOAT NOT NULL DEFAULT 0.0,
-    current_step VARCHAR(200),
-    result_id UUID REFERENCES accounts(account_id),
-    error VARCHAR(500),
-    analysis_type VARCHAR(20) NOT NULL,
-    batch_id UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_jobs_status ON jobs(status);
-CREATE INDEX idx_jobs_batch_id ON jobs(batch_id) WHERE batch_id IS NOT NULL;
-
-CREATE TABLE accounts (
-    account_id UUID PRIMARY KEY,
-    company_name VARCHAR(200) NOT NULL,
-    domain VARCHAR(200),
-    industry VARCHAR(100),
-    intelligence JSONB NOT NULL,
-    confidence_score FLOAT NOT NULL DEFAULT 0.0,
-    analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_accounts_company ON accounts(company_name);
-CREATE INDEX idx_accounts_domain ON accounts(domain) WHERE domain IS NOT NULL;
-CREATE INDEX idx_accounts_analyzed ON accounts(analyzed_at DESC);
-```
-
-This is provided for reference only — the hackathon implementation uses in-memory dicts.
+| SQLite (`data/fello.db`) | PostgreSQL | New store implementation only |
+| `aiosqlite` | `asyncpg` or `databases` | Replace driver; same interface |
+| `CREATE TABLE IF NOT EXISTS` | Alembic migrations | Add migration framework |
+| Module singleton swap | FastAPI dependency injection | Minor refactor |

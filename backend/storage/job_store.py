@@ -5,6 +5,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from backend.storage.base import AbstractJobStore
+
 
 class JobStatus(str, Enum):
     PENDING = "PENDING"
@@ -26,7 +28,7 @@ class JobRecord(BaseModel):
     updated_at: str
 
 
-class InMemoryJobStore:
+class InMemoryJobStore(AbstractJobStore):
     """Thread-safe, asyncio-compatible in-memory job store."""
 
     def __init__(self) -> None:

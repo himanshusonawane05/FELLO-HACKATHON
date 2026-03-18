@@ -31,6 +31,26 @@ async def lifespan(app: FastAPI):
     logger.info("  LLM primary  : %s", settings.GEMINI_MODEL_NAME if settings.GEMINI_API_KEY else settings.MODEL_NAME)
     logger.info("  LLM fallback : %s", settings.MODEL_NAME if settings.GEMINI_API_KEY else "none")
     logger.info("  CORS origins : %s", settings.CORS_ORIGINS)
+
+    db_url = settings.DATABASE_URL
+    if db_url and db_url.lower() not in ("", "none"):
+        from backend.storage.sqlite_store import (
+            SQLiteAccountStore,
+            SQLiteJobStore,
+            init_db,
+        )
+
+        await init_db(db_url)
+
+        import backend.storage.account_store as _as
+        import backend.storage.job_store as _js
+
+        _js.job_store = SQLiteJobStore(db_url)
+        _as.account_store = SQLiteAccountStore(db_url)
+        logger.info("  Storage      : SQLite (%s)", db_url)
+    else:
+        logger.info("  Storage      : In-memory (data lost on restart)")
+
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     yield
     logger.info("Shutting down Fello AI Account Intelligence API")

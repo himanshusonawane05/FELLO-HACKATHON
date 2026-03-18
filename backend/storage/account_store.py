@@ -2,9 +2,10 @@ import asyncio
 from typing import Optional
 
 from backend.domain.intelligence import AccountIntelligence
+from backend.storage.base import AbstractAccountStore
 
 
-class InMemoryAccountStore:
+class InMemoryAccountStore(AbstractAccountStore):
     """Thread-safe, asyncio-compatible in-memory account intelligence store."""
 
     def __init__(self) -> None:

@@ -6,9 +6,12 @@ import AccountCard from "@/components/AccountCard";
 import AnalysisForm from "@/components/AnalysisForm";
 import LoadingSkeleton from "@/components/LoadingSkeleton";
 import PipelineProgress from "@/components/PipelineProgress";
+import VisitorScenarios from "@/components/VisitorScenarios";
 import { useAccountAnalysis } from "@/hooks/useAccountAnalysis";
 import { api } from "@/lib/api";
 import type { AccountSummary, CompanyAnalysisRequest, VisitorAnalysisRequest } from "@/types/intelligence";
+
+type DashboardTab = "dashboard" | "scenarios";
 
 function isCompanyRequest(
   data: VisitorAnalysisRequest | CompanyAnalysisRequest
@@ -21,6 +24,7 @@ export default function DashboardPage(): React.ReactElement {
   const { submit, isSubmitting, isLoading, result, error, pipelineStep, pipelineProgress, reset } =
     useAccountAnalysis();
 
+  const [activeTab, setActiveTab] = useState<DashboardTab>("dashboard");
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [pendingCompany, setPendingCompany] = useState<string | null>(null);
@@ -95,6 +99,34 @@ export default function DashboardPage(): React.ReactElement {
         </p>
       </section>
 
+      {/* Tab switcher */}
+      <div className="flex gap-2 border-b border-border pb-0">
+        {(
+          [
+            { id: "dashboard", label: "Dashboard" },
+            { id: "scenarios", label: "Visitor Scenarios" },
+          ] as { id: DashboardTab; label: string }[]
+        ).map(({ id, label }) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={`px-5 py-2.5 text-sm font-mono font-medium border-b-2 transition-all -mb-px ${
+              activeTab === id
+                ? "border-accent text-accent"
+                : "border-transparent text-muted hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Visitor Scenarios tab */}
+      {activeTab === "scenarios" && <VisitorScenarios />}
+
+      {/* Dashboard tab content */}
+      {activeTab === "dashboard" && (
+        <>
       {/* Analysis form (hidden during pipeline run) */}
       {!isPipelineRunning && (
         <AnalysisForm onSubmit={handleSubmit} isSubmitting={isSubmitting} />
@@ -185,6 +217,8 @@ export default function DashboardPage(): React.ReactElement {
             ))}
           </div>
         </section>
+      )}
+        </>
       )}
     </div>
   );

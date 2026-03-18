@@ -1,8 +1,16 @@
 # High-Level Design — Fello AI Account Intelligence System
 
-> **Version**: 1.0  
+> **Version**: 1.1  
 > **Date**: 2026-03-18  
-> **Status**: Architecture Phase — No implementation code exists yet
+> **Status**: ✅ Fully Implemented — See [Implementation Status](./implementation-status.md) for deviations
+
+> **Implementation Notes (added v1.1):**
+> - All layers described here are built and integration-verified
+> - Parallel fan-out uses `asyncio.gather` inside nodes rather than LangGraph `Send()` — functionally equivalent
+> - LLM provider is Gemini (primary) + OpenAI (fallback), not OpenAI-only as originally designed
+> - Clearbit/Apollo enrichment is not wired; Tavily + LLM is used instead
+> - Batch analysis (`/analyze/batch`) is not yet implemented
+> - SQLite persistence is the default; in-memory fallback available via `DATABASE_URL=none`
 
 ---
 
@@ -125,12 +133,13 @@ Both converge into the same enrichment pipeline after company identification.
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    STORAGE (In-Memory)                               │
+│              STORAGE (SQLite default / In-Memory fallback)           │
 │                                                                     │
 │  JobStore      — tracks analysis jobs (status, progress, result)    │
 │  AccountStore  — persists AccountIntelligence results               │
 │                                                                     │
-│  (Dict-based for hackathon; interface supports future DB migration) │
+│  SQLite: data/fello.db — data survives restarts                     │
+│  In-memory: fallback via DATABASE_URL=none                          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -147,7 +156,7 @@ Both converge into the same enrichment pipeline after company identification.
 | **Agents** | LangChain/OpenAI | LLM reasoning, domain model production | No HTTP, no DB, no tool instantiation |
 | **Tools** | httpx, Tavily SDK | External API calls, web scraping | No LLM, no domain logic |
 | **Domain** | Pydantic v2 | Data contracts, validation, serialization | No imports from any other layer |
-| **Storage** | Python dicts (async-safe) | Job tracking, result persistence | No business logic |
+| **Storage** | SQLite (aiosqlite) / dicts | Job tracking, result persistence | No business logic |
 
 ---
 
@@ -239,18 +248,19 @@ Frontend polls batch status → lists results as they complete
 
 ## 6. Technology Stack
 
-| Layer | Technology | Version | Rationale |
-|-------|-----------|---------|-----------|
-| Frontend | Next.js | 14.x | App router, server components, fast DX |
-| UI Kit | shadcn/ui + Tailwind | latest | Composable, dark-theme-ready, accessible |
-| Backend | FastAPI | 0.110+ | Async-native, auto OpenAPI, Pydantic integration |
-| Orchestration | LangGraph | 0.2+ | Stateful agent graphs with parallel execution |
-| LLM | OpenAI GPT-4o-mini | — | Structured outputs, fast, cost-effective for hackathon |
-| Search | Tavily API | — | AI-optimized search, clean results |
-| HTTP Client | httpx | 0.27+ | Async, timeout support, connection pooling |
-| IP Lookup | ipapi.co + ip-api.com | — | Free tier, fallback pattern |
-| Enrichment | Clearbit + Apollo | — | Company data APIs with LLM fallback |
-| Storage | In-memory (dict) | — | Hackathon scope; interface supports future DB |
+| Layer | Technology | Version | Rationale | Status |
+|-------|-----------|---------|-----------|--------|
+| Frontend | Next.js | 14.x | App router, server components, fast DX | ✅ Built |
+| UI Kit | shadcn/ui + Tailwind | latest | Composable, dark-theme-ready, accessible | ✅ Built |
+| Backend | FastAPI | 0.110+ | Async-native, auto OpenAPI, Pydantic integration | ✅ Built |
+| Orchestration | LangGraph | 0.2+ | Stateful agent graphs with parallel execution | ✅ Built |
+| LLM Primary | **Gemini 2.5 Flash** | — | Thinking model, JSON mode, fast | ✅ Active |
+| LLM Fallback | OpenAI GPT-4o-mini | — | Structured outputs, fallback only | ✅ Active |
+| Search | Tavily API v0.3.3 | — | AI-optimized search, clean results | ✅ Active |
+| HTTP Client | httpx | 0.27+ | Async, timeout support, connection pooling | ✅ Built |
+| IP Lookup | ipapi.co + ip-api.com | — | Free tier, fallback pattern | ✅ Active |
+| Enrichment | ~~Clearbit + Apollo~~ | — | ~~Company data APIs~~ — **not wired; using Tavily + LLM** | ⚠️ Stub |
+| Storage | SQLite (default) / In-memory (fallback) | aiosqlite 0.20+ | Data persists across restarts; in-memory fallback via `DATABASE_URL=none` | ✅ Built |
 
 ---
 
@@ -285,7 +295,7 @@ Frontend polls batch status → lists results as they complete
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| In-memory storage | Dict-based stores | 48-hour hackathon; no DB setup overhead |
+| SQLite storage | `aiosqlite` + JSON column | Zero-config persistence; data survives restarts; in-memory fallback preserved |
 | Async job pattern | 202 + polling | Agent pipeline takes 10-30s; can't block HTTP |
 | LangGraph over raw asyncio | LangGraph Send() | Built-in parallel fan-out, state management, retries |
 | GPT-4o-mini over GPT-4 | Cost + speed | 10x cheaper, 3x faster, sufficient for structured outputs |

@@ -46,8 +46,8 @@ def _build_agents() -> dict[str, Any]:
 async def _update_progress(job_id: str, progress: float, step: str) -> None:
     """Write job progress to store. Silently ignores failures."""
     try:
-        from backend.storage.job_store import JobStatus, job_store
-        await job_store.update(job_id, status=JobStatus.PROCESSING, progress=progress, current_step=step)
+        import backend.storage.job_store as _js
+        await _js.job_store.update(job_id, status=_js.JobStatus.PROCESSING, progress=progress, current_step=step)
     except Exception as exc:
         logger.warning("progress update failed for %s: %s", job_id, exc)
 

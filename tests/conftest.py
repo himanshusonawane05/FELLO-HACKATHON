@@ -51,8 +51,9 @@ def mock_llm_factory(monkeypatch):
 def fresh_stores(monkeypatch):
     """Patch module-level store singletons with fresh instances per test.
 
-    Uses sys.modules to get the actual module objects, bypassing the
-    backend.storage package __init__.py which shadows submodule names.
+    The controller uses module-attribute access (_job_store_mod.job_store and
+    _account_store_mod.account_store) so we only need to patch the module
+    attributes — the controller reads them at call time, not import time.
     """
     import sys
 
@@ -66,12 +67,9 @@ def fresh_stores(monkeypatch):
 
     js_mod = sys.modules["backend.storage.job_store"]
     as_mod = sys.modules["backend.storage.account_store"]
-    ctrl_mod = sys.modules["backend.controllers.analysis"]
 
     monkeypatch.setattr(js_mod, "job_store", new_job_store)
     monkeypatch.setattr(as_mod, "account_store", new_account_store)
-    monkeypatch.setattr(ctrl_mod, "job_store", new_job_store)
-    monkeypatch.setattr(ctrl_mod, "account_store", new_account_store)
 
     return new_job_store, new_account_store
 

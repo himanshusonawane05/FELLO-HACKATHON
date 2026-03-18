@@ -14,8 +14,9 @@ from uuid import uuid4
 from backend.domain.company import CompanyInput
 from backend.domain.intelligence import AccountIntelligence
 from backend.domain.visitor import VisitorSignal
-from backend.storage.account_store import account_store
-from backend.storage.job_store import JobRecord, JobStatus, job_store
+import backend.storage.account_store as _account_store_mod
+import backend.storage.job_store as _job_store_mod
+from backend.storage.job_store import JobRecord, JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class AnalysisController:
     async def analyze_visitor(self, signal: VisitorSignal) -> JobRecord:
         """Create job, dispatch graph for visitor analysis. Returns the JobRecord."""
         job_id = str(uuid4())
-        record = await job_store.create(job_id)
+        record = await _job_store_mod.job_store.create(job_id)
         asyncio.create_task(
             self._run_pipeline(job_id, visitor_signal=signal),
             name=f"pipeline-{job_id[:8]}",
@@ -36,7 +37,7 @@ class AnalysisController:
     async def analyze_company(self, input: CompanyInput) -> JobRecord:
         """Create job, dispatch graph for company analysis. Returns the JobRecord."""
         job_id = str(uuid4())
-        record = await job_store.create(job_id)
+        record = await _job_store_mod.job_store.create(job_id)
         asyncio.create_task(
             self._run_pipeline(job_id, company_input=input),
             name=f"pipeline-{job_id[:8]}",
@@ -46,27 +47,28 @@ class AnalysisController:
     async def analyze_batch(self, inputs: list[CompanyInput]) -> tuple[JobRecord, list[str]]:
         """Create a batch job + one job per company. Returns (batch_record, job_ids)."""
         batch_id = str(uuid4())
-        batch_record = await job_store.create(batch_id)
+        batch_record = await _job_store_mod.job_store.create(batch_id)
         job_ids: list[str] = []
         for company_input in inputs:
             record = await self.analyze_company(company_input)
             job_ids.append(record.job_id)
-        # Mark the batch job complete immediately (individual jobs run independently)
-        await job_store.update(batch_id, status=JobStatus.PROCESSING, progress=0.05,
-                               current_step="Individual jobs dispatched")
+        await _job_store_mod.job_store.update(
+            batch_id, status=JobStatus.PROCESSING, progress=0.05,
+            current_step="Individual jobs dispatched",
+        )
         return batch_record, job_ids
 
     async def get_job_status(self, job_id: str) -> Optional[JobRecord]:
         """Return the current JobRecord. Returns None if not found."""
-        return await job_store.get(job_id)
+        return await _job_store_mod.job_store.get(job_id)
 
     async def get_account(self, account_id: str) -> Optional[AccountIntelligence]:
         """Return completed AccountIntelligence from AccountStore."""
-        return await account_store.get(account_id)
+        return await _account_store_mod.account_store.get(account_id)
 
     async def list_accounts(self, page: int = 1, page_size: int = 20) -> tuple[list, int]:
         """Return paginated account list and total count."""
-        return await account_store.list(page=page, size=page_size)
+        return await _account_store_mod.account_store.list(page=page, size=page_size)
 
     # ── Private pipeline runner ────────────────────────────────────────────────
 
@@ -78,10 +80,9 @@ class AnalysisController:
         company_input: Optional[CompanyInput] = None,
     ) -> None:
         """Execute the LangGraph pipeline as a background task with granular progress."""
-        # Lazy import to avoid circular dependency at module load time
         from backend.graph.workflow import compiled_workflow
 
-        await job_store.update(
+        await _job_store_mod.job_store.update(
             job_id,
             status=JobStatus.PROCESSING,
             progress=0.02,
@@ -110,8 +111,8 @@ class AnalysisController:
             intelligence: Optional[AccountIntelligence] = result.get("intelligence")
 
             if intelligence:
-                result_id = await account_store.save(intelligence)
-                await job_store.update(
+                result_id = await _account_store_mod.account_store.save(intelligence)
+                await _job_store_mod.job_store.update(
                     job_id,
                     status=JobStatus.COMPLETED,
                     progress=1.0,
@@ -122,7 +123,7 @@ class AnalysisController:
             else:
                 errors = result.get("errors", [])
                 error_msg = "; ".join(errors) if errors else "Pipeline produced no output"
-                await job_store.update(
+                await _job_store_mod.job_store.update(
                     job_id,
                     status=JobStatus.FAILED,
                     error=error_msg,
@@ -131,7 +132,7 @@ class AnalysisController:
 
         except Exception as exc:
             logger.error("Job %s pipeline exception: %s", job_id[:8], exc, exc_info=True)
-            await job_store.update(
+            await _job_store_mod.job_store.update(
                 job_id,
                 status=JobStatus.FAILED,
                 error=str(exc),
