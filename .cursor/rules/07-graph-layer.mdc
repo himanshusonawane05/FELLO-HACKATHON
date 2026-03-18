@@ -1,0 +1,44 @@
+---
+description: LangGraph orchestration layer in backend/graph/
+globs: backend/graph/**/*.py
+alwaysApply: false
+---
+
+You are writing the GRAPH ORCHESTRATION layer. This layer defines the LangGraph workflow that coordinates agents.
+
+## File responsibilities
+- `state.py`: PipelineState TypedDict with all agent input/output keys
+- `nodes.py`: Thin wrapper functions that instantiate and call agents
+- `workflow.py`: Graph definition, edges, conditional routing, compilation
+
+## Mandatory patterns
+- Use `TypedDict` for PipelineState — never a Pydantic model (LangGraph requirement)
+- Use `Annotated[list[str], operator.add]` for fields multiple agents append to (`errors`, `reasoning_trace`)
+- Use `Send()` for parallel fan-out — never `asyncio.gather` inside a node
+- Every node function must catch exceptions and write to `state["errors"]` — never let a node crash the graph
+- Every node must update job progress via the JobStore (pass job_id through state)
+
+## Graph structure
+```
+START → route_input
+  ├─ (visitor) → identification_node → parallel_stage_1
+  ├─ (company) → parallel_stage_1
+parallel_stage_1 = [enrichment_node, intent_node, persona_node]
+  → parallel_stage_2 = [tech_stack_node, signals_node, leadership_node]
+  → playbook_node → summary_node → END
+```
+
+## Node wrapper pattern
+```python
+async def enrichment_node(state: PipelineState) -> dict:
+    agent = EnrichmentAgent(llm=get_llm(), tools=get_tools())
+    company_input = state.get("identified_company") or state.get("company_input")
+    result = await agent.run(company_input)
+    return {"company_profile": result, "reasoning_trace": result.reasoning_trace}
+```
+
+## Forbidden in graph/
+- No direct LLM calls — that belongs in agents
+- No HTTP/FastAPI imports
+- No tool instantiation inside node functions — use factory functions
+- No blocking I/O

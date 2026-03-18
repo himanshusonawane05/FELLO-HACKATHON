@@ -1,0 +1,48 @@
+---
+alwaysApply: true
+---
+
+---
+description: All tool wrappers in backend/tools/ — external API integrations
+globs: backend/tools/**/*.py
+alwaysApply: false
+---
+
+You are writing the TOOLS layer. Tools are thin async wrappers around external APIs. They never contain business logic.
+
+## Mandatory tool contract
+- MUST extend `BaseTool` from `backend/tools/base_tool.py`
+- MUST implement `async def call(self, **kwargs) -> Optional[dict]`
+- MUST return `None` on ANY failure — never raise to caller
+- MUST include in every return dict: `source_url: str`, `fetched_at: str (ISO)`, `tool_name: str`
+- MUST use `@cached_call(ttl=300)` decorator for identical inputs
+
+## Retry & rate limit rules
+- Exponential backoff: 3 retries, base delay 1s, multiplier 2x
+- Hard timeout per call: 8 seconds
+- Log every failure with: tool name, error type, input hash (not raw input)
+
+## Tool-specific rules
+
+### ip_lookup.py
+- Primary: ipapi.co — Fallback: ip-api.com
+- If org/isp contains AWS, GCP, Azure, Cloudflare, DigitalOcean → set company_name to None
+- Return: `{company_name, country, city, isp, org, confidence}`
+
+### web_search.py
+- Use Tavily API — key from `settings.TAVILY_API_KEY`
+- Max 5 results, filter out: reddit.com, quora.com, pinterest.com
+- Always include result rank and domain in returned dict
+
+### scraper.py
+- Timeout 8s hard limit using `asyncio.wait_for`
+- Extract: title, meta_description, first 2000 chars visible text, all script src attrs
+- Script srcs are used for tech stack detection — never discard them
+
+### enrichment_apis.py
+- Try Clearbit → Apollo → LLM fallback in that order
+- Never expose raw API response shapes — always normalize to CompanyProfile-compatible dict
+
+## Forbidden in tools/
+- No LLM calls — tools are pure I/O, reasoning belongs in agents
+- No domain logic, scoring, or inference

@@ -1,0 +1,40 @@
+---
+alwaysApply: true
+---
+
+---
+description: All Next.js frontend files in frontend/
+globs: frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+You are writing the FRONTEND VIEW layer. Components are presentational — they receive typed props and render UI.
+
+## TypeScript rules
+- `AccountIntelligence` interface in `frontend/types/intelligence.ts` MUST mirror the Pydantic domain model field-for-field
+- No `any` types anywhere — if you don't know the type, ask
+- All API calls go through `frontend/lib/api.ts` exclusively — never raw fetch in components
+
+## Component architecture
+- Pages (`app/page.tsx`, `app/account/[id]/page.tsx`): fetch data, manage state, pass props down
+- Components (`components/`): receive typed props only, no data fetching, no side effects
+- Hooks (`hooks/`): `useAccountAnalysis`, `useJobPoller` for shared async logic
+
+## Required component behaviours
+- `IntentMeter`: renders score as animated progress bar — red <4, amber 4-7, green >7. Never render score as plain text.
+- `AccountCard`: always shows loading skeleton while data is pending — use `shadcn/ui Skeleton`
+- `PersonaBadge`: renders role + confidence as a pill badge — confidence below 50% renders muted/gray
+- `SalesPlaybook`: priority High = red border accent, Medium = amber, Low = gray
+
+## Design rules (from frontend-design skill)
+- Dark theme by default — bg `#0a0a0a`, surface `#111111`, accent `#00ff88` (signal green)
+- Font pairing: `DM Mono` for scores/data, `Cabinet Grotesk` for headings (load from Fontsource)
+- Shadcn/ui for all primitives — customize via CSS variables, never override with inline styles
+- All async operations show 3 states: skeleton → content → error
+- Intent score changes animate with `transition-all duration-500`
+
+## Forbidden in frontend/
+- No business logic or scoring calculations
+- No direct `fetch()` calls outside `lib/api.ts`
+- No hardcoded API URLs — use `process.env.NEXT_PUBLIC_API_URL`
+- No `any` types

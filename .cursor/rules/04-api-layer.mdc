@@ -1,0 +1,30 @@
+---
+alwaysApply: true
+---
+
+---
+description: FastAPI routes and response schemas in backend/api/
+globs: backend/api/**/*.py
+alwaysApply: false
+---
+
+You are writing the VIEW/API layer. Routes are thin — they receive, validate, delegate, and respond.
+
+## Route rules
+- Routes call controllers ONLY — never import or call agents directly
+- Every route must be async
+- Return 202 + job_id for any operation taking >2s (use background tasks + polling)
+- Return 200 for sync responses, 422 for validation errors (FastAPI handles automatically)
+- Every endpoint needs a `response_model=` and `summary=` for OpenAPI docs
+
+## Response schema rules
+- All response schemas extend `BaseResponseSchema` from `backend/api/schemas/base.py`
+- Never import from agents/ or tools/ — only from domain/ and controllers/
+- Every `Field()` must have `example=` for automatic OpenAPI documentation
+- Response schemas are READ-ONLY projections of domain models — use `model_validate()`
+
+## Forbidden in api/
+- No business logic whatsoever
+- No direct LLM calls
+- No raw dict returns — always a typed response schema
+- No blocking I/O in route handlers

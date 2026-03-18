@@ -1,0 +1,38 @@
+---
+description: In-memory storage layer in backend/storage/
+globs: backend/storage/**/*.py
+alwaysApply: false
+---
+
+You are writing the STORAGE layer. Storage provides async-safe in-memory persistence for the hackathon.
+
+## Design principles
+- All stores use `dict` as backing store — no database for hackathon scope
+- All methods are `async def` to support future DB migration without API change
+- Use `asyncio.Lock` to protect concurrent writes
+- Stores accept and return domain models — never raw dicts
+
+## Required stores
+
+### JobStore
+- `create(job_id: str) -> JobRecord`
+- `update(job_id: str, **fields) -> JobRecord`
+- `get(job_id: str) -> Optional[JobRecord]`
+- JobRecord fields: job_id, status, progress, current_step, result_id, error, created_at, updated_at
+
+### AccountStore
+- `save(intelligence: AccountIntelligence) -> str` (returns account_id)
+- `get(account_id: str) -> Optional[AccountIntelligence]`
+- `list(page: int, page_size: int) -> tuple[list[AccountIntelligence], int]`
+
+## Singleton pattern
+- Both stores MUST be module-level singletons
+- Import pattern: `from backend.storage.job_store import job_store`
+- This allows dependency injection in controllers without a DI framework
+
+## Forbidden in storage/
+- No business logic or scoring
+- No HTTP imports
+- No LLM calls
+- No external API calls
+- No synchronous blocking calls

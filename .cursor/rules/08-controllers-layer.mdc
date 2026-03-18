@@ -1,0 +1,48 @@
+---
+description: Controller layer bridging API routes and graph execution in backend/controllers/
+globs: backend/controllers/**/*.py
+alwaysApply: false
+---
+
+You are writing the CONTROLLER layer. Controllers bridge API routes and the LangGraph workflow.
+
+## Responsibilities
+- Create job records in JobStore
+- Dispatch graph execution as background tasks
+- Retrieve job status and account results
+- Handle batch decomposition into individual jobs
+
+## Mandatory patterns
+- All methods are `async def`
+- Controllers receive domain models (not request schemas) — API routes do the conversion
+- Controllers return domain models or storage records — API routes convert to response schemas
+- Use `asyncio.create_task()` for background graph execution
+- Catch all graph exceptions and mark jobs as FAILED
+
+## Controller methods
+```python
+class AnalysisController:
+    async def analyze_visitor(self, signal: VisitorSignal) -> str:
+        """Creates job, dispatches graph background task, returns job_id."""
+
+    async def analyze_company(self, company: CompanyInput) -> str:
+        """Creates job, dispatches graph background task, returns job_id."""
+
+    async def analyze_batch(self, companies: list[CompanyInput]) -> tuple[str, list[str]]:
+        """Creates batch job + individual jobs, returns (batch_id, job_ids)."""
+
+    async def get_job_status(self, job_id: str) -> Optional[JobRecord]:
+        """Returns current job record from store."""
+
+    async def get_account(self, account_id: str) -> Optional[AccountIntelligence]:
+        """Returns completed intelligence from store."""
+
+    async def list_accounts(self, page: int, page_size: int) -> tuple[list, int]:
+        """Returns paginated account list."""
+```
+
+## Forbidden in controllers/
+- No FastAPI imports (Request, Response, HTTPException) — that's the API layer
+- No direct LLM calls
+- No HTTP response shaping — return domain models only
+- No direct tool calls

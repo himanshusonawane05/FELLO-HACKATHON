@@ -1,0 +1,35 @@
+---
+alwaysApply: true
+---
+
+---
+description: All files inside backend/domain/ — pure Pydantic domain models
+globs: backend/domain/**/*.py
+alwaysApply: false
+---
+
+You are writing the MODEL layer. These classes are immutable value objects with zero knowledge of HTTP, LLMs, or databases.
+
+## Mandatory class contract
+- Every class MUST extend `BaseEntity` from `backend/domain/base.py`
+- Use `model_config = ConfigDict(frozen=True)` — all models are immutable
+- Every output model MUST have `confidence_score: float = Field(ge=0.0, le=1.0, default=0.0)`
+- Every output model MUST have `reasoning_trace: list[str] = Field(default_factory=list)`
+- All enums are defined in the same file as the model that uses them, UPPER_SNAKE_CASE values
+- Use `Optional[X]` for undiscoverable fields, never `X | None`
+
+## Forbidden imports in domain/
+- No imports from: agents/, controllers/, tools/, api/
+- No langchain, langgraph, openai, anthropic imports
+- No httpx, requests, aiohttp imports
+- No async def — domain models are pure synchronous value objects
+
+## Field naming
+- snake_case, fully descriptive: `company_size_estimate` not `size`
+- Monetary: always suffix with `_usd` or `_range`
+- Scores: always suffix with `_score` and constrain with `ge/le`
+
+## When asked to create a model
+1. First list: all fields, their types, which are Optional, and why
+2. Then write the complete class with a one-line docstring
+3. Then show an example instantiation

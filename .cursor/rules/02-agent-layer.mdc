@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+---
+
+---
+description: All agent files in backend/agents/ — LLM orchestration and reasoning
+globs: backend/agents/**/*.py
+alwaysApply: false
+---
+
+You are writing the AGENT layer. Agents are stateless async workers that consume domain models and produce domain models.
+
+## Mandatory agent contract
+- MUST extend `BaseAgent` from `backend/agents/base_agent.py`
+- MUST implement `async def run(self, input: BaseEntity) -> BaseEntity`
+- MUST implement `def validate_input(self, input: BaseEntity) -> bool`
+- MUST set `agent_name: ClassVar[str]` as a class variable
+- MUST return a fully typed domain model, NEVER a raw dict or string
+- MUST populate `reasoning_trace` on every model returned
+
+## LLM call rules
+- All LLM calls via `self._llm` injected at construction, never instantiated inside run()
+- Wrap every LLM call: `async with self._timed_call("task_name"):` for automatic timing
+- Max iterations per task: 3 tool call loops — add a counter and break if exceeded
+- On any LLM failure: catch exception, log it, return a degraded domain model with `confidence_score=0.0`
+- Never let an agent raise an exception to its caller
+
+## Parallel execution (LangGraph)
+- enrichment, intent_scorer, persona_agent MUST run via `Send()` — never sequential
+- Each parallel agent writes to its own state key — no shared mutable state
+- Use `Annotated[list, operator.add]` for any field multiple agents append to
+
+## Forbidden in agents/
+- No FastAPI imports, no response schemas
+- No direct database calls
+- No hardcoded model names — read from `settings.MODEL_NAME`
+- No `time.sleep` — use `asyncio.sleep` if needed

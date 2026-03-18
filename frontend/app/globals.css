@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Fonts are loaded via next/font/google in app/layout.tsx — no @import needed */
+
+:root {
+  --color-background: #0a0a0a;
+  --color-surface: #111111;
+  --color-accent: #00ff88;
+  --color-accent-dim: #00cc6e;
+  --color-muted: #666666;
+  --color-border: #222222;
+  --color-text: #f0f0f0;
+  --color-text-dim: #a0a0a0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Intent score color thresholds */
+.intent-low { color: #ef4444; }
+.intent-mid { color: #f59e0b; }
+.intent-high { color: #00ff88; }
+
+/* Transition utility */
+.animate-progress {
+  transition: width 500ms ease-in-out;
+}

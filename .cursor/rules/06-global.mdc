@@ -1,0 +1,46 @@
+---
+alwaysApply: true
+---
+
+---
+description: Global rules that apply to the entire codebase
+globs: **/*.{py,ts,tsx}
+alwaysApply: true
+---
+
+## Project context
+This is the Fello AI Account Intelligence system — a multi-agent pipeline that converts visitor signals and company names into structured sales intelligence. Built for a 48-hour hackathon. Prioritize working code over perfect code.
+
+## MCP tools available (use them)
+- **filesystem**: read/write any project file directly — use this instead of asking me to create files
+- **fetch**: fetch live URLs for research and testing tool responses
+- **git**: check git status, diffs, and history when debugging
+- **memory**: store architectural decisions and key context across sessions
+- **browser**: scrape live company websites when testing the scraper tool
+
+## Layer boundary enforcement (CRITICAL)
+```
+domain/     ← Models only. No agents, no HTTP, no LLM.
+agents/     ← Business logic + LLM. No HTTP response shapes.
+tools/      ← External I/O only. No LLM, no domain logic.
+api/        ← HTTP only. No agents, no LLM calls.
+frontend/   ← UI only. No business logic, no direct API calls.
+```
+If you find yourself importing across forbidden boundaries, STOP and restructure.
+
+## Code style
+- Python: Black formatting, type hints everywhere, docstrings on all public methods
+- TypeScript: strict mode, no implicit any, explicit return types on all functions
+- No TODO comments in committed code — either implement it or open a GitHub issue
+- All secrets via environment variables — never hardcoded, never committed
+
+## Error handling philosophy
+- Agents: always return degraded output, never raise
+- Tools: always return None on failure, never raise
+- API routes: always return structured error response, never 500 with a traceback
+- Frontend: always show error state UI, never white screen
+
+## When using MCP filesystem tool
+- Always read the target file before editing it
+- After writing, read it back to confirm the change landed correctly
+- Use git MCP to check diff before considering a task done

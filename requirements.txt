@@ -1,0 +1,28 @@
+# Web framework
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+
+# Data validation
+pydantic>=2.7.4,<3.0.0
+pydantic-settings==2.2.1
+
+# AI / LLM
+langchain>=1.2.0
+langchain-core>=1.2.0
+langchain-openai>=1.1.0
+langchain-google-genai>=4.2.0
+langgraph>=1.1.0
+openai>=2.26.0
+google-generativeai>=0.8.0
+
+# HTTP client
+httpx>=0.28.0
+
+# Search
+tavily-python==0.3.3
+
+# Web scraping
+beautifulsoup4==4.12.3
+
+# Utilities
+python-dotenv==1.0.1
