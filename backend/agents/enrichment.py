@@ -63,6 +63,10 @@ class EnrichmentAgent(BaseAgent):
         llm_profile = await self._llm_enrich(company.company_name, company.domain, search_context)
 
         if llm_profile:
+            raw_confidence = llm_profile.get("confidence_score", 0.6)
+            # Ensure confidence >= 0.4 for identified companies so downstream agents
+            # (TechStack, Signals, Leadership) do not skip when Tavily failed but LLM succeeded
+            effective_confidence = max(float(raw_confidence), 0.4) if not search_context else raw_confidence
             return CompanyProfile(
                 company_name=company.company_name,
                 domain=company.domain or llm_profile.get("domain"),
@@ -72,7 +76,7 @@ class EnrichmentAgent(BaseAgent):
                 founding_year=llm_profile.get("founding_year"),
                 description=llm_profile.get("description"),
                 annual_revenue_range=llm_profile.get("annual_revenue_range"),
-                confidence_score=llm_profile.get("confidence_score", 0.6),
+                confidence_score=effective_confidence,
                 data_sources=["tavily_search", "llm_synthesis"] if search_context else ["llm_synthesis"],
                 reasoning_trace=[
                     f"Enriched {company.company_name} via LLM with {'web search context' if search_context else 'general knowledge'}",
@@ -88,13 +92,22 @@ class EnrichmentAgent(BaseAgent):
             reasoning_trace=["LLM enrichment failed; returning minimal profile"],
         )
 
+    def _normalize_for_search(self, company_name: str) -> str:
+        """Normalize company name for search consistency (avoids cache fragmentation)."""
+        s = company_name.strip()
+        for suffix in (" Inc.", " Inc", " Inc.,", " LLC.", " LLC", ", Inc.", ", Inc"):
+            if s.endswith(suffix):
+                return s[: -len(suffix)].strip()
+        return s
+
     async def _tavily_enrich(self, company_name: str, domain: Optional[str]) -> Optional[str]:
         """Search Tavily for company information. Returns concatenated search snippets."""
         try:
             from backend.tools.web_search import WebSearchTool
 
             tool = WebSearchTool()
-            query = f"{company_name} company overview industry employees revenue"
+            normalized = self._normalize_for_search(company_name)
+            query = f"{normalized} company overview industry employees revenue"
             if domain:
                 query = f"site:{domain} OR {query}"
 
@@ -130,7 +143,9 @@ Here is web search context about the company:
 Use this information to fill in the profile accurately.
 """
         else:
-            context_block = "No web search results are available. Use your general knowledge if you know this company. If you don't recognize the company, set confidence_score below 0.4."
+            context_block = """No web search results are available. Use your general knowledge.
+For well-known organizations (e.g. Wikimedia Foundation, major tech companies, Fortune 500), set confidence_score >= 0.5.
+If you don't recognize the company at all, set confidence_score below 0.4."""
 
         prompt = f"""You are a B2B sales intelligence analyst. Generate a company profile for "{company_name}"{f' (domain: {domain})' if domain else ''}.
 

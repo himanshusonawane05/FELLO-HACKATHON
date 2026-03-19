@@ -152,9 +152,12 @@ def _mock_playbook(intel: "AccountIntelligence") -> SalesPlaybook:
         talking_points.append(f"Lead with {company.industry} vertical success stories")
 
     contact_name = leaders[0].name.split()[0] if leaders else "there"
-    signal_ref = signals[0].title if signals else f"{company.company_name}'s growth"
+    if signals:
+        intro = f"Hi {contact_name}, I noticed {company.company_name}'s recent {signals[0].title.lower()} — "
+    else:
+        intro = f"Hi {contact_name}, I noticed interest from {company.company_name} — "
     outreach = (
-        f"Hi {contact_name}, I noticed {company.company_name} is {signal_ref.lower()} — "
+        f"{intro}"
         f"we've helped similar {company.industry or 'companies'} increase qualified pipeline by 30-50%. "
         f"Would you be open to a quick 20-min call this week?"
     )

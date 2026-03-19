@@ -23,11 +23,11 @@ const SCENARIOS: Scenario[] = [
     tag: "HOT LEAD",
     tagColor: "#00ff88",
     description:
-      "Pricing + demo pages, 3 visits this week, referred from a competitor comparison site.",
+      "Pricing + demo pages, 3 visits this week, referred from a competitor comparison site. IP resolves to Wikimedia Foundation.",
     signal: "Strong purchase signals",
     data: {
       visitor_id: "visitor_high_001",
-      ip_address: "34.201.45.12",
+      ip_address: "208.80.154.1",
       pages_visited: ["/pricing", "/demo", "/enterprise", "/case-studies", "/roi-calculator"],
       time_on_site_seconds: 342,
       visit_count: 3,
@@ -41,11 +41,11 @@ const SCENARIOS: Scenario[] = [
     tag: "EVALUATION",
     tagColor: "#60a5fa",
     description:
-      "Deep dive into docs, API references, and security pages. Likely an engineer vetting the product.",
+      "Deep dive into docs, API references, and security pages. IP resolves to Imperial College of Science (UK academic/research org).",
     signal: "Technical due diligence",
     data: {
       visitor_id: "visitor_tech_002",
-      ip_address: "52.86.112.77",
+      ip_address: "193.63.75.1",
       pages_visited: ["/docs", "/api-reference", "/security", "/integrations", "/changelog"],
       time_on_site_seconds: 487,
       visit_count: 5,
@@ -59,11 +59,11 @@ const SCENARIOS: Scenario[] = [
     tag: "AWARENESS",
     tagColor: "#a78bfa",
     description:
-      "Blog posts and about page only. First visit, mobile device — likely top-of-funnel discovery.",
+      "Blog posts and about page only. First visit, mobile — likely top-of-funnel. IP resolves to Technological University Dublin.",
     signal: "Early awareness stage",
     data: {
       visitor_id: "visitor_research_003",
-      ip_address: "18.144.23.91",
+      ip_address: "147.252.1.1",
       pages_visited: ["/blog/what-is-account-intelligence", "/about", "/features"],
       time_on_site_seconds: 95,
       visit_count: 1,
@@ -73,15 +73,15 @@ const SCENARIOS: Scenario[] = [
   },
   {
     id: "low-signal",
-    label: "Low-Signal Visitor",
-    tag: "COLD",
+    label: "Cloud Provider IP (Unknown)",
+    tag: "COLD / CLOUD",
     tagColor: "#6b7280",
     description:
-      "Single page visit, very short session. Could be a bot, casual browser, or wrong audience.",
-    signal: "Minimal engagement",
+      "Single page visit, very short session. IP 34.201.45.12 belongs to AWS — pipeline correctly returns Unknown (cloud providers are filtered).",
+    signal: "Degraded: no company from cloud IP",
     data: {
       visitor_id: "visitor_low_004",
-      ip_address: "203.0.113.42",
+      ip_address: "34.201.45.12",
       pages_visited: ["/"],
       time_on_site_seconds: 18,
       visit_count: 1,
