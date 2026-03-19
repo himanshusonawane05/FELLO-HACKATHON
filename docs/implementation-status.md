@@ -1,8 +1,8 @@
 # Implementation Status — Fello AI Account Intelligence System
 
-> **Version**: 2.0  
-> **Date**: 2026-03-18  
-> **Status**: Fully implemented and integration-verified  
+> **Version**: 2.1  
+> **Date**: 2026-03-19  
+> **Status**: Fully implemented and integration-verified; PostgreSQL storage added  
 > **Depends on**: [HLD](./hld.md), [LLD](./lld.md), [Data Pipeline](./data-pipeline.md)
 
 This document describes what is **actually built** as of the current codebase, what deviates from the original design, and what remains to be done. Use this as the ground truth when onboarding or continuing development.
@@ -17,7 +17,7 @@ This document describes what is **actually built** as of the current codebase, w
 | API routes | ✅ Complete | `/analyze/visitor`, `/analyze/company`, `/jobs/{id}`, `/accounts`, `/accounts/{id}` |
 | Controllers | ✅ Complete | `AnalysisController` with full job lifecycle |
 | LangGraph pipeline | ✅ Complete | 5-stage graph with asyncio.gather parallelism |
-| Storage | ✅ Complete | SQLite (default) with in-memory fallback; `aiosqlite` async driver |
+| Storage | ✅ Complete | PostgreSQL (production) + SQLite (local dev) + in-memory fallback; auto-selected via `DATABASE_URL` |
 | LLM service | ✅ Complete | Gemini primary, OpenAI fallback, structured JSON output |
 | IP Lookup tool | ✅ Complete | ipapi.co primary, ip-api.com fallback, cloud-provider detection |
 | Web search tool | ✅ Complete | Tavily via sync `TavilyClient` + `asyncio.to_thread` |
@@ -27,7 +27,7 @@ This document describes what is **actually built** as of the current codebase, w
 | Frontend ↔ Backend | ✅ Integrated | Mocks removed; response transformation layer in `api.ts` |
 | Batch analysis | ❌ Not implemented | `/analyze/batch` endpoint does not exist |
 | Authentication | ❌ Not implemented | No auth; noted as future work |
-| Persistent storage | ✅ Implemented | SQLite via `aiosqlite`; data survives restarts |
+| Persistent storage | ✅ Implemented | PostgreSQL (Railway) or SQLite (local); data survives restarts and redeployments |
 
 ---
 
@@ -121,20 +121,51 @@ stage1_node → stage2_node → playbook_node → summary_node → END
 
 ### 2.6 Storage
 
-The system supports two storage backends, selected by the `DATABASE_URL` config setting:
+The system supports three storage backends, auto-selected by the `DATABASE_URL` config setting. All three implement `AbstractJobStore` / `AbstractAccountStore` from `backend/storage/base.py` — the controller and graph code are unaffected by which backend is active.
 
-**SQLite (default)** — `backend/storage/sqlite_store.py`:
+**PostgreSQL (production)** — `backend/storage/postgres_store.py`:
+- Added 2026-03-19 to fix data loss on Railway deployments (see Section 2.7 below)
+- Uses `asyncpg` with a connection pool (`min_size=2, max_size=10`)
+- `accounts.data` column is `JSONB`; `jobs` table is flat
+- Tables created automatically on startup via `CREATE TABLE IF NOT EXISTS`
+- Pool closed gracefully on shutdown
+- Activated when `DATABASE_URL` starts with `postgresql://` or `postgres://`
+
+**SQLite (local dev)** — `backend/storage/sqlite_store.py`:
 - Uses `aiosqlite` for async SQLite access
 - `jobs` table stores flat job records; `accounts` table stores full `AccountIntelligence` as a JSON blob plus denormalized columns for listing/filtering
 - Database file at `data/fello.db` (created automatically on startup)
-- Data persists across server restarts
+- Data persists across server restarts on the same machine
+- Activated when `DATABASE_URL` starts with `sqlite:///`
 
 **In-memory (fallback)** — `backend/storage/job_store.py` + `backend/storage/account_store.py`:
 - Python dicts with `asyncio.Lock` for thread safety
 - Data is lost on server restart
-- Activated by setting `DATABASE_URL=none` or `DATABASE_URL=`
+- Activated by setting `DATABASE_URL=none` or leaving it unset
 
-Both implementations inherit from `AbstractJobStore` / `AbstractAccountStore` in `backend/storage/base.py`, ensuring the controller and graph code work identically with either backend.
+### 2.7 PostgreSQL Migration — Problem and Solution
+
+**Problem:** Railway's free plan uses an ephemeral filesystem. Every new deployment wipes the container's local disk, including `data/fello.db`. This meant all analyzed accounts and in-flight jobs were lost on every deploy.
+
+**Root cause:** SQLite stores data as a file on the local filesystem. Railway does not offer persistent volumes on the free/hobby plan. The file path `data/fello.db` is recreated empty on each deployment.
+
+**Solution:** Added a PostgreSQL storage backend that uses Railway's managed Postgres addon (an external, persistent database service). The implementation:
+
+1. **New file** `backend/storage/postgres_store.py` — `PostgresJobStore` and `PostgresAccountStore` implementing the same `AbstractJobStore` / `AbstractAccountStore` interfaces as the SQLite stores. Uses `asyncpg` for async access with a connection pool.
+
+2. **Updated** `backend/main.py` lifespan — detects `postgresql://` or `postgres://` prefix in `DATABASE_URL` and wires the Postgres stores instead of SQLite. Falls back to in-memory if Postgres init fails.
+
+3. **Updated** `backend/config.py` — `normalize_database_url` validator rewrites `postgres://` → `postgresql://` automatically, because Railway injects the former but `asyncpg` requires the latter.
+
+4. **Updated** `requirements.txt` — added `asyncpg>=0.29.0`.
+
+**No other code was changed.** Domain models, agents, controllers, API routes, and graph nodes are all unaffected because they only interact with the `job_store` and `account_store` module-level singletons, which are swapped at startup.
+
+**How to activate on Railway:**
+1. Add the Railway Postgres addon to your project.
+2. Railway auto-injects `DATABASE_URL=postgres://...` as an environment variable.
+3. The backend normalizes it to `postgresql://...` and connects automatically.
+4. Tables are created on first startup.
 
 ---
 
@@ -206,7 +237,8 @@ The backend returns `AccountIntelligence` as a nested Pydantic model. The fronte
 
 | Limitation | Impact | Workaround |
 |-----------|--------|-----------|
-| ~~In-memory storage~~ | ~~Data lost on server restart~~ | **Fixed:** SQLite persistence is now the default; data survives restarts |
+| ~~In-memory storage~~ | ~~Data lost on server restart~~ | **Fixed:** SQLite (local) and PostgreSQL (production) backends persist data |
+| ~~SQLite wiped on Railway deploy~~ | ~~Data lost on every deployment~~ | **Fixed:** PostgreSQL backend added; Railway auto-injects `DATABASE_URL` |
 | `--reload` clears jobs | Jobs disappear mid-pipeline | Run uvicorn **without** `--reload` in integration testing |
 | Gemini thinking-model token overhead | JSON truncation if `max_output_tokens` is too low | Fixed: budget = `max(requested * 3, 8192)` |
 | OpenAI quota exceeded | Falls through to no LLM | Ensure `GEMINI_API_KEY` is set as primary |
@@ -262,7 +294,7 @@ The bottleneck is Gemini API latency (~8–15s per call). Stage 1 and Stage 2 ag
 
 | Gap | Severity | Detail |
 |-----|----------|--------|
-| **Persistent storage** | High | In-memory only; data lost on restart. Primary gap. |
+| ~~**Persistent storage**~~ | ~~High~~ | **Fixed** — PostgreSQL (production) and SQLite (local dev) backends implemented |
 | **`reasoning_trace` not shown in UI** | Low | Stored in backend but no frontend component displays it. Evaluators cannot see chain-of-thought. |
 | **Batch analysis untested** | Medium | Route, schema, and controller method exist but have not been end-to-end tested. |
 | **Scraper tool unused** | Low | `ScraperTool` is implemented but TechStackAgent uses LLM knowledge instead. |
@@ -296,7 +328,7 @@ The bottleneck is Gemini API latency (~8–15s per call). Stage 1 and Stage 2 ag
 ### 6.1 Not Implemented (Hackathon Scope)
 
 - **Batch analysis** (`POST /analyze/batch`) — endpoint not created
-- ~~**Persistent storage**~~ — **Implemented** (SQLite via `aiosqlite`)
+- ~~**Persistent storage**~~ — **Implemented** (PostgreSQL for production via `asyncpg`; SQLite for local dev via `aiosqlite`)
 - **Authentication** — API key or JWT
 - **Rate limiting** — per-IP or per-key request throttling
 - **Clearbit/Apollo enrichment** — `EnrichmentAPITool` is a stub
@@ -319,3 +351,4 @@ The bottleneck is Gemini API latency (~8–15s per call). Stage 1 and Stage 2 ag
 | data-pipeline.md | `scraper` used by TechStackAgent | LLM knowledge used instead |
 | data-pipeline.md | `enrichment_apis` used by EnrichmentAgent | WebSearchTool + LLM used instead |
 | integration.md | `NEXT_PUBLIC_USE_MOCKS` toggle | Mocks fully removed; flag is vestigial |
+| database-schema.md | "Future migration path" to PostgreSQL | **Implemented** — `postgres_store.py` added; `DATABASE_URL` routing in `main.py` |

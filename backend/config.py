@@ -39,22 +39,26 @@ class Settings(BaseSettings):
     # ── Storage ─────────────────────────────────────────────────────────────
     DATABASE_URL: Optional[str] = Field(
         default="sqlite:///data/fello.db",
-        description="SQLite database path. Set to empty string or 'none' to use in-memory stores.",
+        description="Database URL: postgres://..., sqlite:///path, or 'none' for in-memory.",
     )
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def normalize_database_url(cls, v: object) -> Optional[str]:
-        """Strip whitespace so Railway/env vars with trailing spaces are respected.
+        """Strip whitespace and normalise postgres URI scheme.
 
-        DATABASE_URL=sqlite:////data/fello.db must be used as-is; no relative
-        path override. This validator only normalizes whitespace.
+        Railway provides DATABASE_URL as postgres://... but asyncpg expects
+        postgresql://... — we accept both and leave the value otherwise untouched.
         """
         if v is None:
             return None
         if isinstance(v, str):
             stripped = v.strip()
-            return stripped if stripped else None
+            if not stripped:
+                return None
+            if stripped.startswith("postgres://"):
+                stripped = "postgresql://" + stripped[len("postgres://"):]
+            return stripped
         return v  # type: ignore[return-value]
 
     # ── Server ────────────────────────────────────────────────────────────────

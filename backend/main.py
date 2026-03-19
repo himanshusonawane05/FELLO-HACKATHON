@@ -33,34 +33,64 @@ async def lifespan(app: FastAPI):
 
     db_url = settings.DATABASE_URL
     if db_url and db_url.lower() not in ("", "none"):
-        try:
-            from backend.storage.sqlite_store import (
-                SQLiteAccountStore,
-                SQLiteJobStore,
-                init_db,
-            )
+        import backend.storage.account_store as _as
+        import backend.storage.job_store as _js
 
-            await init_db(db_url)
+        is_postgres = db_url.startswith("postgres://") or db_url.startswith("postgresql://")
 
-            import backend.storage.account_store as _as
-            import backend.storage.job_store as _js
+        if is_postgres:
+            try:
+                from backend.storage.postgres_store import (
+                    PostgresAccountStore,
+                    PostgresJobStore,
+                    init_postgres,
+                )
 
-            _js.job_store = SQLiteJobStore(db_url)
-            _as.account_store = SQLiteAccountStore(db_url)
-            logger.info("  Storage      : SQLite (%s)", db_url)
-        except Exception as exc:
-            logger.error(
-                "  Storage      : SQLite init FAILED (%s) — falling back to in-memory: %s",
-                db_url,
-                exc,
-                exc_info=True,
-            )
-            logger.warning("  Storage      : In-memory (data will not persist)")
+                pool = await init_postgres(db_url)
+
+                _js.job_store = PostgresJobStore(pool)
+                _as.account_store = PostgresAccountStore(pool)
+                logger.info("  Storage      : PostgreSQL")
+            except Exception as exc:
+                logger.error(
+                    "  Storage      : PostgreSQL init FAILED — falling back to in-memory: %s",
+                    exc,
+                    exc_info=True,
+                )
+                logger.warning("  Storage      : In-memory (data will not persist)")
+        else:
+            try:
+                from backend.storage.sqlite_store import (
+                    SQLiteAccountStore,
+                    SQLiteJobStore,
+                    init_db,
+                )
+
+                await init_db(db_url)
+
+                _js.job_store = SQLiteJobStore(db_url)
+                _as.account_store = SQLiteAccountStore(db_url)
+                logger.info("  Storage      : SQLite (%s)", db_url)
+            except Exception as exc:
+                logger.error(
+                    "  Storage      : SQLite init FAILED (%s) — falling back to in-memory: %s",
+                    db_url,
+                    exc,
+                    exc_info=True,
+                )
+                logger.warning("  Storage      : In-memory (data will not persist)")
     else:
         logger.info("  Storage      : In-memory (data lost on restart)")
 
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    _pg_pool = locals().get("pool")  # captured only in the postgres branch
+
     yield
+
+    if _pg_pool is not None:
+        await _pg_pool.close()
+        logger.info("PostgreSQL connection pool closed")
     logger.info("Shutting down Fello AI Account Intelligence API")
 
 

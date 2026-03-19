@@ -1,38 +1,42 @@
 # Database Schema — Fello AI Account Intelligence System
 
-> **Version**: 2.0  
-> **Date**: 2026-03-18  
-> **Storage Engine**: SQLite (default) / In-memory Python dicts (fallback)  
+> **Version**: 3.0  
+> **Date**: 2026-03-19  
+> **Storage Engine**: PostgreSQL (production) / SQLite (local dev) / In-memory (fallback)  
 > **Depends on**: [LLD](./lld.md), [API Contracts](./api-contracts.md)  
-> **Status**: SQLite persistence implemented — data survives restarts
+> **Status**: PostgreSQL support added — data persists across Railway deployments
 
 ---
 
 ## 1. Storage Architecture
 
-The system uses **SQLite** (default) or **in-memory dicts** (fallback) for persistence. The storage backend is selected by the `DATABASE_URL` config setting. Both backends implement the same `AbstractJobStore` / `AbstractAccountStore` interfaces, so controllers and graph code are unaffected.
+The system supports three storage backends, selected automatically by the `DATABASE_URL` config setting. All three implement the same `AbstractJobStore` / `AbstractAccountStore` interfaces — controllers, graph nodes, and API routes are completely unaffected by which backend is active.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Storage Layer                         │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │    AbstractJobStore / AbstractAccountStore       │    │
-│  │         (backend/storage/base.py)                │    │
-│  └──────────┬──────────────────────┬───────────────┘    │
-│             │                      │                     │
-│  ┌──────────▼─────────┐ ┌─────────▼──────────────┐     │
-│  │  SQLiteJobStore     │ │  InMemoryJobStore       │     │
-│  │  SQLiteAccountStore │ │  InMemoryAccountStore   │     │
-│  │  (sqlite_store.py)  │ │  (job_store.py,         │     │
-│  │                     │ │   account_store.py)     │     │
-│  │  Database file:     │ │  Python dicts +         │     │
-│  │  data/fello.db      │ │  asyncio.Lock           │     │
-│  └─────────────────────┘ └────────────────────────┘     │
-│                                                         │
-│  Selected via DATABASE_URL config setting               │
-│  Module-level singletons swapped in main.py lifespan    │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        Storage Layer                              │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │         AbstractJobStore / AbstractAccountStore           │    │
+│  │                  (backend/storage/base.py)                │    │
+│  └────────────┬──────────────────┬──────────────────────────┘    │
+│               │                  │                  │             │
+│  ┌────────────▼──────┐  ┌────────▼──────┐  ┌───────▼──────────┐ │
+│  │ PostgresJobStore   │  │ SQLiteJobStore│  │ InMemoryJobStore  │ │
+│  │ PostgresAccount    │  │ SQLiteAccount │  │ InMemoryAccount   │ │
+│  │ Store              │  │ Store         │  │ Store             │ │
+│  │ (postgres_store.py)│  │(sqlite_store) │  │(job_store.py,     │ │
+│  │                    │  │               │  │ account_store.py) │ │
+│  │ asyncpg pool       │  │ aiosqlite     │  │ Python dicts +    │ │
+│  │ production/Railway │  │ local dev     │  │ asyncio.Lock      │ │
+│  └────────────────────┘  └───────────────┘  └──────────────────┘ │
+│                                                                  │
+│  DATABASE_URL=postgresql://...  → PostgresJobStore (production)  │
+│  DATABASE_URL=sqlite:///...     → SQLiteJobStore (local dev)     │
+│  DATABASE_URL=none or unset     → InMemoryJobStore (ephemeral)   │
+│                                                                  │
+│  Module-level singletons swapped in main.py lifespan            │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 **Relationship:** When a job completes, its `result_id` field points to an `account_id` in the AccountStore. This is the foreign key link between the two stores.
@@ -296,16 +300,32 @@ This is a **projection** — a read-only subset of the full object. The API laye
 
 ## 5. Implementation Details
 
-### 5.1 SQLite Backend (Default)
+### 5.1 PostgreSQL Backend (Production)
 
-- Database file: `data/fello.db` (created automatically on startup)
+- File: `backend/storage/postgres_store.py`
+- Driver: `asyncpg` — native async PostgreSQL driver, no ORM
+- Connection pool: `asyncpg.create_pool(min_size=2, max_size=10)` — created once at startup, shared across all requests
+- `accounts.data` column is `JSONB` — stores full `AccountIntelligence` via `model_dump_json()`; deserialized on read via `model_validate_json()`
+- Denormalized columns (`company_name`, `domain`, `industry`, `confidence_score`, `analyzed_at`) enable efficient listing without JSON parsing
+- Upsert via `INSERT ... ON CONFLICT (account_id) DO UPDATE SET ...`
+- Tables created automatically on startup via `CREATE TABLE IF NOT EXISTS`
+- Pool closed gracefully on server shutdown
+- Activated when `DATABASE_URL` starts with `postgresql://` or `postgres://`
+
+**Why PostgreSQL was added:** Railway's free plan uses an ephemeral filesystem — the `data/fello.db` SQLite file is wiped on every deployment. PostgreSQL (via Railway's managed Postgres addon) provides a persistent external store that survives restarts and redeployments.
+
+### 5.2 SQLite Backend (Local Development)
+
+- File: `backend/storage/sqlite_store.py`
 - Driver: `aiosqlite` (async wrapper around Python's built-in `sqlite3`)
 - Each operation opens and closes a connection (simple, no pooling)
 - `accounts.data` column stores full `AccountIntelligence` as JSON via `model_dump_json()`
 - Deserialized on read via `AccountIntelligence.model_validate_json()`
 - Denormalized columns (`company_name`, `domain`, `industry`, `confidence_score`) enable efficient listing without JSON parsing
+- Database file at `data/fello.db` (created automatically on startup)
+- Activated when `DATABASE_URL` starts with `sqlite:///`
 
-### 5.2 In-Memory Backend (Fallback)
+### 5.3 In-Memory Backend (Fallback / Testing)
 
 ```python
 class InMemoryJobStore(AbstractJobStore):
@@ -317,28 +337,82 @@ class InMemoryAccountStore(AbstractAccountStore):
     _lock: asyncio.Lock
 ```
 
-- Activated by setting `DATABASE_URL=none` or `DATABASE_URL=`
+- Activated by setting `DATABASE_URL=none` or leaving it unset
 - Data lost on server restart
-- Useful for testing or when SQLite is not desired
+- Useful for unit testing or when no database is available
 
-### 5.3 Store Selection (main.py lifespan)
+### 5.4 Store Selection (main.py lifespan)
 
-On startup, the `lifespan` function in `backend/main.py` checks `settings.DATABASE_URL`:
-- If set and not `"none"`: initializes SQLite tables via `init_db()`, replaces module-level `job_store` and `account_store` singletons with `SQLiteJobStore` / `SQLiteAccountStore`
-- If unset or `"none"`: keeps the default `InMemoryJobStore` / `InMemoryAccountStore`
+On startup, `backend/main.py` lifespan checks `settings.DATABASE_URL`:
 
-### 5.4 Concurrency Safety
+```
+DATABASE_URL starts with postgresql:// or postgres://
+    → init_postgres(url) creates asyncpg pool + tables
+    → job_store = PostgresJobStore(pool)
+    → account_store = PostgresAccountStore(pool)
 
-- **SQLite**: SQLite handles its own locking; each operation uses a separate connection
+DATABASE_URL starts with sqlite:///
+    → init_db(url) creates file + tables
+    → job_store = SQLiteJobStore(url)
+    → account_store = SQLiteAccountStore(url)
+
+DATABASE_URL is None, empty, or "none"
+    → keep default InMemoryJobStore / InMemoryAccountStore
+```
+
+If any backend fails to initialize, the lifespan logs the error and falls back to in-memory stores. The server still starts.
+
+### 5.5 URL Normalization
+
+Railway provides `DATABASE_URL` as `postgres://...` but `asyncpg` requires `postgresql://...`. The `normalize_database_url` validator in `backend/config.py` rewrites the scheme automatically:
+
+```python
+if stripped.startswith("postgres://"):
+    stripped = "postgresql://" + stripped[len("postgres://"):]
+```
+
+This means Railway's auto-injected `DATABASE_URL` works without any manual intervention.
+
+### 5.6 Concurrency Safety
+
+- **PostgreSQL**: `asyncpg` connection pool handles concurrent access natively; each coroutine acquires a connection from the pool
+- **SQLite**: SQLite handles its own locking; each operation opens a separate connection with a 30s timeout
 - **In-memory**: `asyncio.Lock` protects concurrent writes
 
 ---
 
-## 6. SQLite Schema (Implemented)
+## 6. Database Schema (Shared: PostgreSQL and SQLite)
 
-The SQLite database (`data/fello.db`) is created automatically on startup via `CREATE TABLE IF NOT EXISTS`. No migrations framework is used.
+Both backends use the same logical schema. The only differences are SQL type names (`DOUBLE PRECISION` vs `REAL`, `JSONB` vs `JSON`) and parameterization style (`$1` vs `?`).
 
-### 6.1 Schema SQL
+### 6.1 Schema SQL (PostgreSQL)
+
+```sql
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    progress DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    current_step TEXT,
+    result_id TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+    account_id TEXT PRIMARY KEY,
+    company_name TEXT NOT NULL,
+    domain TEXT,
+    industry TEXT,
+    confidence_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    analyzed_at TEXT NOT NULL,
+    data JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_analyzed ON accounts(analyzed_at DESC);
+```
+
+### 6.2 Schema SQL (SQLite)
 
 ```sql
 CREATE TABLE IF NOT EXISTS jobs (
@@ -365,27 +439,34 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE INDEX IF NOT EXISTS idx_accounts_analyzed ON accounts(analyzed_at DESC);
 ```
 
-### 6.2 Design Decisions
+### 6.3 Design Decisions
 
-- `accounts.data` stores the full `AccountIntelligence` as a JSON blob (via `model_dump_json()` / `model_validate_json()`)
-- Top-level columns (`company_name`, `domain`, `industry`, `confidence_score`, `analyzed_at`) are denormalized for efficient listing/filtering without parsing JSON
-- `jobs` table stores flat fields directly (no JSON blob needed)
-- `aiosqlite` provides async access matching the existing store interface
-- Each operation opens and closes a connection (simple, no pooling needed for hackathon scale)
+- `accounts.data` stores the full `AccountIntelligence` as a JSON/JSONB blob (`model_dump_json()` / `model_validate_json()`) — avoids a complex relational schema for a deeply nested domain model
+- Top-level columns (`company_name`, `domain`, `industry`, `confidence_score`, `analyzed_at`) are denormalized for efficient listing/filtering without parsing the full JSON blob
+- `jobs` table stores flat fields directly — no JSON blob needed
+- No migrations framework — `CREATE TABLE IF NOT EXISTS` is sufficient for hackathon scope
+- Timestamps stored as ISO 8601 strings (not native `TIMESTAMP`) for portability across SQLite and Postgres
 
-### 6.3 Configuration
+### 6.4 Configuration Reference
 
 ```env
-# In backend/.env
-DATABASE_URL=sqlite:///data/fello.db    # default — SQLite persistence
-DATABASE_URL=none                        # fallback — in-memory (data lost on restart)
+# Production (Railway Postgres)
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+
+# Railway auto-injects as postgres:// — config.py normalizes it automatically
+DATABASE_URL=postgres://user:pass@host:5432/dbname
+
+# Local development (SQLite)
+DATABASE_URL=sqlite:///data/fello.db
+
+# No persistence (in-memory, data lost on restart)
+DATABASE_URL=none
 ```
 
-### 6.4 Future Migration Path (Post-Hackathon)
+### 6.5 Dependencies
 
-| Current | Future | Migration Effort |
-|---------|--------|-----------------|
-| SQLite (`data/fello.db`) | PostgreSQL | New store implementation only |
-| `aiosqlite` | `asyncpg` or `databases` | Replace driver; same interface |
-| `CREATE TABLE IF NOT EXISTS` | Alembic migrations | Add migration framework |
-| Module singleton swap | FastAPI dependency injection | Minor refactor |
+| Backend | Python package | Version |
+|---------|---------------|---------|
+| PostgreSQL | `asyncpg` | `>=0.29.0` |
+| SQLite | `aiosqlite` | `>=0.20.0` |
+| In-memory | (stdlib only) | — |

@@ -26,6 +26,7 @@ beautifulsoup4==4.12.3
 
 # Database
 aiosqlite>=0.20.0
+asyncpg>=0.29.0
 
 # Utilities
 python-dotenv==1.0.1
