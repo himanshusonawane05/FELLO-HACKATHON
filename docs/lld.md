@@ -68,8 +68,8 @@ backend/
 └── storage/
     ├── __init__.py
     ├── base.py                      # Abstract store interface
-    ├── job_store.py                 # InMemoryJobStore
-    └── account_store.py             # InMemoryAccountStore
+    ├── job_store.py                 # JobStore (PostgreSQL/SQLite/InMemory)
+    └── account_store.py             # AccountStore (PostgreSQL/SQLite/InMemory)
 
 frontend/
 ├── package.json
@@ -524,6 +524,13 @@ class AnalysisController:
 
 ## 7. Storage Layer
 
+Storage is selected at startup based on `DATABASE_URL`:
+- **PostgreSQL** (production): `postgresql://...` or `postgres://...` — uses `asyncpg`; Railway addon auto-injects `DATABASE_URL`; tables created on first startup.
+- **SQLite** (local): `sqlite:///data/fello.db` — uses `aiosqlite`; file-based persistence.
+- **In-memory** (fallback): `DATABASE_URL=none` — ephemeral; data lost on restart.
+
+See [deployment.md](./deployment.md) for configuration and troubleshooting.
+
 ### 7.1 JobStore
 
 ```python
@@ -543,7 +550,7 @@ class JobRecord(BaseModel):
     created_at: str
     updated_at: str
 
-class InMemoryJobStore:
+class JobStore:  # Backed by PostgreSQL, SQLite, or in-memory
     async def create(self, job_id: str) -> JobRecord: ...
     async def update(self, job_id: str, **fields) -> JobRecord: ...
     async def get(self, job_id: str) -> Optional[JobRecord]: ...
@@ -552,7 +559,7 @@ class InMemoryJobStore:
 ### 7.2 AccountStore
 
 ```python
-class InMemoryAccountStore:
+class AccountStore:  # Backed by PostgreSQL, SQLite, or in-memory
     async def save(self, intelligence: AccountIntelligence) -> str: ...
     async def get(self, account_id: str) -> Optional[AccountIntelligence]: ...
     async def list(self, page: int, size: int) -> tuple[list[AccountIntelligence], int]: ...
@@ -579,6 +586,9 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    
+    # Storage
+    DATABASE_URL: str = "sqlite:///data/fello.db"  # postgresql:// for prod, none for in-memory
     
     # Tuning
     TOOL_TIMEOUT_SECONDS: int = 8

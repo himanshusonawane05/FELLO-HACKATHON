@@ -10,7 +10,7 @@
 > - LLM provider is Gemini (primary) + OpenAI (fallback), not OpenAI-only as originally designed
 > - Clearbit/Apollo enrichment is not wired; Tavily + LLM is used instead
 > - Batch analysis (`/analyze/batch`) is not yet implemented
-> - SQLite persistence is the default; in-memory fallback available via `DATABASE_URL=none`
+> - Storage: PostgreSQL (Railway) for production, SQLite for local dev, in-memory fallback via `DATABASE_URL=none`
 
 ---
 
@@ -133,13 +133,14 @@ Both converge into the same enrichment pipeline after company identification.
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│              STORAGE (SQLite default / In-Memory fallback)           │
+│         STORAGE (PostgreSQL prod / SQLite local / In-Memory)         │
 │                                                                     │
 │  JobStore      — tracks analysis jobs (status, progress, result)    │
 │  AccountStore  — persists AccountIntelligence results               │
 │                                                                     │
-│  SQLite: data/fello.db — data survives restarts                     │
-│  In-memory: fallback via DATABASE_URL=none                          │
+│  Production: PostgreSQL (asyncpg) on Railway — persistent, managed  │
+│  Local: SQLite (aiosqlite) at data/fello.db — file-based            │
+│  Fallback: In-memory via DATABASE_URL=none                          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -156,7 +157,7 @@ Both converge into the same enrichment pipeline after company identification.
 | **Agents** | LangChain/OpenAI | LLM reasoning, domain model production | No HTTP, no DB, no tool instantiation |
 | **Tools** | httpx, Tavily SDK | External API calls, web scraping | No LLM, no domain logic |
 | **Domain** | Pydantic v2 | Data contracts, validation, serialization | No imports from any other layer |
-| **Storage** | SQLite (aiosqlite) / dicts | Job tracking, result persistence | No business logic |
+| **Storage** | PostgreSQL (asyncpg) / SQLite (aiosqlite) / in-memory | Job tracking, result persistence | No business logic |
 
 ---
 
@@ -260,7 +261,7 @@ Frontend polls batch status → lists results as they complete
 | HTTP Client | httpx | 0.27+ | Async, timeout support, connection pooling | ✅ Built |
 | IP Lookup | ipapi.co + ip-api.com | — | Free tier, fallback pattern | ✅ Active |
 | Enrichment | ~~Clearbit + Apollo~~ | — | ~~Company data APIs~~ — **not wired; using Tavily + LLM** | ⚠️ Stub |
-| Storage | SQLite (default) / In-memory (fallback) | aiosqlite 0.20+ | Data persists across restarts; in-memory fallback via `DATABASE_URL=none` | ✅ Built |
+| Storage | PostgreSQL (prod) / SQLite (local) / In-memory (fallback) | asyncpg / aiosqlite 0.20+ | Production: Railway Postgres addon via `DATABASE_URL`; local: `data/fello.db`; fallback: `DATABASE_URL=none` | ✅ Built |
 
 ---
 
@@ -295,7 +296,7 @@ Frontend polls batch status → lists results as they complete
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| SQLite storage | `aiosqlite` + JSON column | Zero-config persistence; data survives restarts; in-memory fallback preserved |
+| Storage | PostgreSQL (asyncpg) for prod, SQLite (aiosqlite) for local | Production: Railway Postgres addon, auto-detected via `DATABASE_URL`; local: `data/fello.db`; in-memory fallback via `DATABASE_URL=none` — see [deployment.md](./deployment.md) |
 | Async job pattern | 202 + polling | Agent pipeline takes 10-30s; can't block HTTP |
 | LangGraph over raw asyncio | LangGraph Send() | Built-in parallel fan-out, state management, retries |
 | GPT-4o-mini over GPT-4 | Cost + speed | 10x cheaper, 3x faster, sufficient for structured outputs |
