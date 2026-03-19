@@ -46,10 +46,15 @@ CREATE INDEX IF NOT EXISTS idx_accounts_analyzed ON accounts(analyzed_at DESC);
 
 async def init_postgres(database_url: str) -> asyncpg.Pool:
     """Create a connection pool and ensure tables exist."""
-    pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10)
+    pool = await asyncpg.create_pool(
+        database_url,
+        min_size=2,
+        max_size=10,
+        max_inactive_connection_lifetime=45.0,
+    )
     async with pool.acquire() as conn:
         await conn.execute(_SCHEMA_SQL)
-    logger.info("PostgreSQL database initialized (pool min=2, max=10)")
+    logger.info("PostgreSQL database initialized (pool min=2, max=10, idle_ttl=45s)")
     return pool
 
 
@@ -97,14 +102,23 @@ class PostgresJobStore(AbstractJobStore):
         set_clause = ", ".join(set_parts)
 
         async with self._pool.acquire() as conn:
-            result = await conn.execute(
-                f"UPDATE jobs SET {set_clause} WHERE job_id = ${len(values)}",  # noqa: S608
+            row = await conn.fetchrow(
+                f"UPDATE jobs SET {set_clause} WHERE job_id = ${len(values)} RETURNING *",  # noqa: S608
                 *values,
             )
-            if result == "UPDATE 0":
+            if row is None:
                 raise KeyError(f"Job {job_id!r} not found")
 
-        return await self.get(job_id)  # type: ignore[return-value]
+        return JobRecord(
+            job_id=row["job_id"],
+            status=JobStatus(row["status"]),
+            progress=row["progress"],
+            current_step=row["current_step"],
+            result_id=row["result_id"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     async def get(self, job_id: str) -> Optional[JobRecord]:
         async with self._pool.acquire() as conn:
