@@ -344,10 +344,10 @@ class BaseAgent(ABC):
 | Agent | Input | Output | Tools Used | LLM Task |
 |-------|-------|--------|-----------|----------|
 | **IdentificationAgent** | VisitorSignal | CompanyInput | ip_lookup, web_search | Resolve ambiguous IP → company |
-| **EnrichmentAgent** | CompanyInput | CompanyProfile | web_search, scraper, enrichment_apis | Aggregate and normalize company data |
+| **EnrichmentAgent** | CompanyInput | CompanyProfile | web_search, scraper (optional) | Uses Tavily search + optional web scraping (if domain available) + LLM synthesis. Does not rely on external enrichment APIs. |
 | **PersonaAgent** | VisitorSignal + CompanyProfile | PersonaInference | — | Infer role from page behavior patterns |
 | **IntentScorerAgent** | VisitorSignal | IntentScore | — | Score intent from behavioral signals |
-| **TechStackAgent** | CompanyProfile | TechStack | scraper | Detect tech from script tags + search |
+| **TechStackAgent** | CompanyProfile | TechStack | scraper (optional) | Uses optional web scraping (if domain available) to detect technologies from HTML, combined with LLM inference fallback. |
 | **SignalsAgent** | CompanyProfile | BusinessSignals | web_search | Find hiring/funding/expansion signals |
 | **LeadershipAgent** | CompanyProfile | LeadershipProfile | web_search | Discover C-suite and VP-level leaders |
 | **PlaybookAgent** | All prior outputs | SalesPlaybook | — | Synthesize strategy from all intelligence |
@@ -470,6 +470,9 @@ class BaseTool(ABC):
     "tool_name": "scraper"
 }
 ```
+
+> Used opportunistically by EnrichmentAgent and TechStackAgent when a domain is available.
+> Scraping is best-effort and non-blocking; system gracefully falls back to LLM-based inference.
 
 **EnrichmentAPITool** returns:
 ```python

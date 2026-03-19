@@ -58,13 +58,22 @@ class TechStackAgent(BaseAgent):
 
         logger.info("[%s] inferring tech stack for %s via LLM", self.agent_name, company.company_name)
 
+        scraper_techs = await self._scrape_detect(company.domain)
+
+        scraper_hint = ""
+        if scraper_techs:
+            scraper_hint = (
+                f"\n\nHTML signals detected from the company website: {', '.join(scraper_techs)}."
+                "\nInclude these in your response with high confidence."
+            )
+
         prompt = f"""You are a technology analyst. Based on this company profile, infer their likely technology stack.
 
 Company: {company.company_name}
 Industry: {company.industry or 'Unknown'}
 Domain: {company.domain or 'Unknown'}
 Size: {company.company_size_estimate or 'Unknown'}
-Description: {company.description or 'No description available'}
+Description: {company.description or 'No description available'}{scraper_hint}
 
 Return a JSON object with:
 - technologies: array of objects, each with:
@@ -95,9 +104,10 @@ Return ONLY valid JSON."""
                     category=cat,
                     confidence_score=t.get("confidence_score", 0.5),
                 ))
+            method = "scraper+llm_inference" if scraper_techs else "llm_inference"
             return TechStack(
                 technologies=technologies,
-                detection_method="llm_inference",
+                detection_method=method,
                 confidence_score=max(0.0, min(1.0, result.confidence_score)),
                 reasoning_trace=[f"LLM inferred {len(technologies)} technologies for {company.company_name}"],
             )
@@ -109,3 +119,44 @@ Return ONLY valid JSON."""
             confidence_score=0.0,
             reasoning_trace=["Tech stack inference failed"],
         )
+
+    async def _scrape_detect(self, domain: Optional[str]) -> list[str]:
+        """Detect technologies from HTML signals. Returns empty list on any failure."""
+        if not domain:
+            return []
+        try:
+            from backend.tools.scraper import ScraperTool
+
+            tool = ScraperTool()
+            result = await tool.call(url=domain)
+            if not result:
+                return []
+
+            detected: list[str] = []
+            html_signals = " ".join(result.get("script_sources", []))
+            text_signals = (result.get("visible_text") or "") + html_signals
+
+            _PATTERNS: list[tuple[str, str]] = [
+                ("react", "React"),
+                ("wp-content", "WordPress"),
+                ("shopify", "Shopify"),
+                ("angular", "Angular"),
+                ("vue", "Vue.js"),
+                ("gtm.js", "Google Tag Manager"),
+                ("analytics.js", "Google Analytics"),
+                ("intercom", "Intercom"),
+                ("hubspot", "HubSpot"),
+                ("salesforce", "Salesforce"),
+            ]
+            for signal, tech_name in _PATTERNS:
+                if signal.lower() in text_signals.lower():
+                    detected.append(tech_name)
+
+            if detected:
+                logger.info("[%s] scraper signals detected: %s", self.agent_name, detected)
+            else:
+                logger.info("[%s] scraper used for %s — no signals detected", self.agent_name, domain)
+            return detected
+        except Exception as exc:
+            logger.info("[%s] scraper skipped (%s: %s)", self.agent_name, domain, exc)
+            return []

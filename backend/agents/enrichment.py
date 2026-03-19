@@ -59,14 +59,23 @@ class EnrichmentAgent(BaseAgent):
         logger.info("[%s] enriching %s via Tavily + LLM", self.agent_name, company.company_name)
 
         search_context = await self._tavily_enrich(company.company_name, company.domain)
+        scrape_context = await self._scrape_enrich(company.domain)
 
-        llm_profile = await self._llm_enrich(company.company_name, company.domain, search_context)
+        llm_profile = await self._llm_enrich(
+            company.company_name, company.domain, search_context, scrape_context
+        )
 
         if llm_profile:
             raw_confidence = llm_profile.get("confidence_score", 0.6)
             # Ensure confidence >= 0.4 for identified companies so downstream agents
             # (TechStack, Signals, Leadership) do not skip when Tavily failed but LLM succeeded
             effective_confidence = max(float(raw_confidence), 0.4) if not search_context else raw_confidence
+            data_sources = []
+            if search_context:
+                data_sources.append("tavily_search")
+            if scrape_context:
+                data_sources.append("web_scrape")
+            data_sources.append("llm_synthesis")
             return CompanyProfile(
                 company_name=company.company_name,
                 domain=company.domain or llm_profile.get("domain"),
@@ -77,9 +86,11 @@ class EnrichmentAgent(BaseAgent):
                 description=llm_profile.get("description"),
                 annual_revenue_range=llm_profile.get("annual_revenue_range"),
                 confidence_score=effective_confidence,
-                data_sources=["tavily_search", "llm_synthesis"] if search_context else ["llm_synthesis"],
+                data_sources=data_sources,
                 reasoning_trace=[
-                    f"Enriched {company.company_name} via LLM with {'web search context' if search_context else 'general knowledge'}",
+                    f"Enriched {company.company_name} via LLM with "
+                    f"{'web search context' if search_context else 'general knowledge'}"
+                    f"{' + scraped homepage' if scrape_context else ''}",
                 ],
             )
 
@@ -129,19 +140,56 @@ class EnrichmentAgent(BaseAgent):
             logger.warning("[%s] Tavily search failed for %s: %s", self.agent_name, company_name, exc)
             return None
 
+    async def _scrape_enrich(self, domain: Optional[str]) -> Optional[str]:
+        """Scrape the company homepage for additional context. Returns None on any failure."""
+        if not domain:
+            logger.info("[%s] scraper skipped (no domain)", self.agent_name)
+            return None
+        try:
+            from backend.tools.scraper import ScraperTool
+
+            tool = ScraperTool()
+            result = await tool.call(url=domain)
+            if not result:
+                logger.info("[%s] scraper skipped (no result for %s)", self.agent_name, domain)
+                return None
+
+            parts: list[str] = []
+            if result.get("title"):
+                parts.append(f"Title: {result['title']}")
+            if result.get("meta_description"):
+                parts.append(f"Description: {result['meta_description']}")
+            if result.get("visible_text"):
+                parts.append(f"Page text: {result['visible_text'][:500]}")
+
+            if not parts:
+                return None
+
+            logger.info("[%s] scraper used for %s", self.agent_name, domain)
+            return "\n".join(parts)
+        except Exception as exc:
+            logger.info("[%s] scraper skipped (%s: %s)", self.agent_name, domain, exc)
+            return None
+
     async def _llm_enrich(
-        self, company_name: str, domain: Optional[str], search_context: Optional[str]
+        self,
+        company_name: str,
+        domain: Optional[str],
+        search_context: Optional[str],
+        scrape_context: Optional[str] = None,
     ) -> Optional[dict]:
         """Use LLM to synthesize a company profile from search results or general knowledge."""
         context_block = ""
-        if search_context:
-            context_block = f"""
-Here is web search context about the company:
----
-{search_context}
----
-Use this information to fill in the profile accurately.
-"""
+        if search_context or scrape_context:
+            sections: list[str] = []
+            if search_context:
+                sections.append(f"Web search results:\n---\n{search_context}\n---")
+            if scrape_context:
+                sections.append(f"Homepage content:\n---\n{scrape_context}\n---")
+            context_block = (
+                "\n\n".join(sections)
+                + "\n\nUse this information to fill in the profile accurately."
+            )
         else:
             context_block = """No web search results are available. Use your general knowledge.
 For well-known organizations (e.g. Wikimedia Foundation, major tech companies, Fortune 500), set confidence_score >= 0.5.

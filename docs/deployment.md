@@ -1,7 +1,7 @@
 # Deployment Guide — Fello AI Account Intelligence
 
-> **Version**: 1.0  
-> **Date**: 2026-03-18  
+> **Version**: 2.0  
+> **Date**: 2026-03-19  
 > **Audience**: Developers, hackathon judges, demo operators
 
 ---
@@ -25,14 +25,15 @@
 │           Backend  (FastAPI + Uvicorn)                   │
 │           Env: backend/.env                              │
 │           CORS: CORS_ORIGINS must include frontend URL   │
-└──────────────────────────┬───────────────────────────────┘
-                           │ aiosqlite
-                           ▼
-┌──────────────────────────────────────────────────────────┐
-│           SQLite  (data/fello.db)                        │
-│           File on the same host as the backend           │
-│           Fallback: in-memory (DATABASE_URL=none)        │
-└──────────────────────────────────────────────────────────┘
+└─────────┬────────────────────────────────┬───────────────┘
+          │ asyncpg (production)            │ aiosqlite (local dev)
+          ▼                                ▼
+┌─────────────────────────┐  ┌─────────────────────────────┐
+│  PostgreSQL (Railway)   │  │  SQLite  (data/fello.db)    │
+│  Persistent, managed    │  │  File-based, local only     │
+│  DATABASE_URL=postgres  │  │  DATABASE_URL=sqlite:///    │
+└─────────────────────────┘  └─────────────────────────────┘
+                           (Fallback: in-memory if DATABASE_URL=none)
 ```
 
 **Component responsibilities:**
@@ -41,7 +42,8 @@
 |-----------|-----------|------|
 | Frontend | Next.js 14, React 18, Tailwind CSS | UI — forms, dashboards, polling |
 | Backend | FastAPI, Uvicorn, LangGraph | API, multi-agent pipeline, job management |
-| Database | SQLite (aiosqlite) | Persistent job and account storage |
+| Database (prod) | PostgreSQL (asyncpg) | Persistent storage on Railway — survives deployments |
+| Database (local) | SQLite (aiosqlite) | Local dev persistence at `data/fello.db` |
 | LLM | Gemini (primary) + OpenAI (fallback) | Agent reasoning and enrichment |
 | Search | Tavily API | Web search tool used by agents |
 
@@ -71,7 +73,7 @@ At least one of `GEMINI_API_KEY` or `OPENAI_API_KEY` must be set. Both together 
 |----------|---------|-------------|
 | `CLEARBIT_API_KEY` | _(empty)_ | Clearbit enrichment — LLM fallback used if missing |
 | `APOLLO_API_KEY` | _(empty)_ | Apollo enrichment — LLM fallback used if missing |
-| `DATABASE_URL` | `sqlite:///data/fello.db` | SQLite path. Set to `none` for in-memory only |
+| `DATABASE_URL` | `sqlite:///data/fello.db` | `postgresql://...` for Railway, `sqlite:///path` for local, `none` for in-memory |
 | `HOST` | `0.0.0.0` | Uvicorn bind host |
 | `PORT` | `8000` | Uvicorn bind port |
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | JSON array of allowed frontend origins |
@@ -178,8 +180,8 @@ cp data/fello.db data/fello.db.bak
 | Component | Recommended Platform | Notes |
 |-----------|---------------------|-------|
 | Frontend | Vercel | Zero-config Next.js deployment |
-| Backend | Railway / Render / Fly.io | Supports persistent disk for SQLite |
-| Database | SQLite on persistent disk | Sufficient for demo scale |
+| Backend | Railway | Managed Postgres addon for persistence |
+| Database | PostgreSQL (Railway addon) | Data survives deployments — no persistent disk needed |
 
 ---
 
@@ -196,7 +198,7 @@ cp data/fello.db data/fello.db.bak
 
 ---
 
-### 5b. Backend — Railway
+### 5b. Backend — Railway (with PostgreSQL)
 
 1. Create a new Railway project and connect your GitHub repo.
 2. Set **Root Directory** to the project root (not `backend/`).
@@ -204,17 +206,23 @@ cp data/fello.db data/fello.db.bak
    ```
    python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
    ```
-4. Add a **Persistent Volume** mounted at `/data` (Railway dashboard → Volumes).
+4. **Add PostgreSQL:** Click **"New"** → **"Database"** → **"PostgreSQL"** in the Railway dashboard.
+   - Railway automatically injects `DATABASE_URL=postgres://user:pass@host:5432/railway` as an environment variable.
+   - The backend normalizes `postgres://` → `postgresql://` automatically (required by asyncpg).
+   - Tables are created on first startup — no manual migration needed.
 5. Set environment variables in Railway dashboard:
    ```
    GEMINI_API_KEY=AIzaSy...
    OPENAI_API_KEY=sk-proj-...
    TAVILY_API_KEY=tvly-...
-   DATABASE_URL=sqlite:////data/fello.db
    CORS_ORIGINS=["https://your-frontend.vercel.app"]
    PORT=8000
    ```
+   **Note:** Do NOT set `DATABASE_URL` manually — Railway auto-injects it from the Postgres addon. If you need to override, use `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a Railway reference variable.
 6. Deploy. Railway installs `requirements.txt` automatically.
+7. **Verify Postgres is active:** Check the backend logs for `Storage : PostgreSQL`. If you see `Storage : In-memory`, the Postgres addon may not be linked — check Railway's Variables tab.
+
+**Migration from SQLite:** If you previously used SQLite with a persistent volume, existing data is not automatically migrated. Re-run analyses to populate the new Postgres database. Remove the persistent volume — it is no longer needed.
 
 ---
 
@@ -225,8 +233,9 @@ cp data/fello.db data/fello.db.bak
 3. Set:
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
-4. Add a **Persistent Disk** mounted at `/data`.
-5. Set environment variables (same as Railway above).
+4. **Option A (recommended):** Create a Render PostgreSQL database and set `DATABASE_URL` to the connection string.
+5. **Option B:** Add a **Persistent Disk** mounted at `/data` and set `DATABASE_URL=sqlite:////data/fello.db`.
+6. Set remaining environment variables (API keys, CORS origins).
 
 ---
 
@@ -254,7 +263,7 @@ Deploy:
 ```bash
 fly launch
 fly secrets set GEMINI_API_KEY=AIzaSy... OPENAI_API_KEY=sk-... TAVILY_API_KEY=tvly-...
-fly secrets set DATABASE_URL=sqlite:////data/fello.db
+fly secrets set DATABASE_URL=postgresql://user:pass@host:5432/dbname   # or sqlite:////data/fello.db with a volume
 fly secrets set CORS_ORIGINS='["https://your-frontend.vercel.app"]'
 fly deploy
 ```
@@ -314,6 +323,22 @@ mkdir data        # macOS/Linux
 md data           # Windows
 ```
 Or set `DATABASE_URL=none` to use in-memory storage (data will not persist across restarts).
+
+---
+
+### PostgreSQL connection failures
+
+**Symptom:** Backend logs show `Storage : PostgreSQL init FAILED — falling back to in-memory`.
+
+**Checks:**
+1. Confirm `DATABASE_URL` is set and contains a valid `postgresql://` or `postgres://` URL.
+2. On Railway: ensure the Postgres addon is linked to the backend service (check Variables tab).
+3. Check that `asyncpg` is installed: `pip install asyncpg>=0.29.0`.
+4. If the Postgres service is not yet ready (first deploy), restart the backend service.
+
+**Symptom:** Backend starts with `Storage : In-memory` on Railway despite having a Postgres addon.
+
+**Fix:** Link the Postgres service to the backend service via Railway's reference variables. The `DATABASE_URL` must be visible in the backend's Variables tab.
 
 ---
 
@@ -377,7 +402,8 @@ Tests (Windows):   .\run_tests.ps1 -All
 Tests (Unix):      ./run_tests.sh --all
 E2E validation:    python e2e-tests/validate_api.py
 
-SQLite file:       data/fello.db
+Storage (local):   SQLite at data/fello.db
+Storage (Railway): PostgreSQL (auto-detected via DATABASE_URL)
 Backend config:    backend/.env
 Frontend config:   frontend/.env.local
 ```
